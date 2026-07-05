@@ -182,6 +182,12 @@ npm run check:dist
 
 ---
 
+## 致谢
+
+感谢 [Linux.do](https://linux.do/) 社区的讨论与反馈。
+
+---
+
 ## License
 
 MIT

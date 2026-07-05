@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>GPT Auth Converter | Local credential format converter</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23115e59' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3Cpath d='M12 15v3'/%3E%3Ccircle cx='12' cy='15' r='1.5'/%3E%3C/svg%3E" />
     <style>:root,
 html[data-theme="light"] {
   color-scheme: light;
@@ -2183,7 +2184,7 @@ html[data-theme="dark"] .editor-format-select {
         </div>
         <div class="header-actions">
           <div class="theme-control">
-            <button type="button" id="themeToggleTrigger" class="theme-label" aria-label="Switch and choose interface theme" aria-haspopup="true" aria-expanded="false">
+            <button type="button" id="themeToggleTrigger" class="theme-label" aria-label="Switch and choose theme" aria-haspopup="true" aria-expanded="false">
               <span id="themeIconContainer">
                 <svg class="theme-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"></line></svg>
               </span>
@@ -2196,7 +2197,7 @@ html[data-theme="dark"] .editor-format-select {
             </div>
           </div>
           <div class="language-control">
-            <button type="button" id="languageToggleTrigger" class="language-label" aria-label="Switch interface language" aria-haspopup="true" aria-expanded="false">
+            <button type="button" id="languageToggleTrigger" class="language-label" aria-label="Switch language" aria-haspopup="true" aria-expanded="false">
               <span id="languageIconContainer">
                 <svg class="language-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
               </span>
@@ -2801,13 +2802,13 @@ Example:
         notice: "\u7EAF\u672C\u5730\u5B89\u5168\u8F6C\u6362\uFF0C\u6240\u6709\u8FD0\u7B97\u5728\u5F53\u524D\u6D4F\u89C8\u5668\u4E2D\u5B8C\u6210\u3002",
         dragTitle: "\u91CA\u653E\u4EE5\u5BFC\u5165 JSON / JSONL \u51ED\u636E",
         dragSub: "\u677E\u5F00\u6DFB\u52A0\u5230\u5217\u8868",
-        themeLabel: "\u754C\u9762\u4E3B\u9898",
-        themeAria: "\u5207\u6362\u548C\u9009\u62E9\u754C\u9762\u4E3B\u9898",
+        themeLabel: "\u4E3B\u9898",
+        themeAria: "\u5207\u6362\u548C\u9009\u62E9\u4E3B\u9898",
         themeSystem: "\u81EA\u52A8",
         themeLight: "\u6D45\u8272",
         themeDark: "\u6DF1\u8272",
-        languageLabel: "\u754C\u9762\u8BED\u8A00",
-        languageAria: "\u5207\u6362\u754C\u9762\u8BED\u8A00",
+        languageLabel: "\u8BED\u8A00",
+        languageAria: "\u5207\u6362\u8BED\u8A00",
         inputTitle: "\u6570\u636E\u8F93\u5165",
         sessionButton: "\u83B7\u53D6 Session",
         addDraftButton: "\u52A0\u5165\u5217\u8868",
@@ -3001,12 +3002,12 @@ Press Ctrl+C to stop.
         dragTitle: "Drop to import JSON / JSONL credentials",
         dragSub: "Release to add to the list",
         themeLabel: "Theme",
-        themeAria: "Switch and choose interface theme",
+        themeAria: "Switch and choose theme",
         themeSystem: "Auto",
         themeLight: "Light",
         themeDark: "Dark",
         languageLabel: "Language",
-        languageAria: "Switch interface language",
+        languageAria: "Switch language",
         inputTitle: "Input",
         sessionButton: "Get Session",
         addDraftButton: "Add to List",
