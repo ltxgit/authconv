@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { strFromU8, unzipSync } from "fflate";
@@ -15,6 +15,10 @@ async function readJsonLines(filePath: string): Promise<unknown[]> {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line) as unknown);
+}
+
+async function modeBits(filePath: string): Promise<number> {
+  return (await stat(filePath)).mode & 0o777;
 }
 
 describe("authconv CLI", () => {
@@ -203,7 +207,9 @@ describe("authconv CLI", () => {
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe("");
-      await expect(readJsonFile(path.join(outDir, "cpa_user_example.com.json"))).resolves.toEqual({
+      const targetPath = path.join(outDir, "cpa_user_example.com.json");
+      expect(result.stderr).toContain(targetPath);
+      await expect(readJsonFile(targetPath)).resolves.toEqual({
         type: "codex",
         email: "user@example.com",
         account_id: "",
@@ -216,6 +222,38 @@ describe("authconv CLI", () => {
         disabled: false,
         id_token_synthetic: true,
       });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes private output directories and credential files", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-private-output-"));
+    try {
+      const input = path.join(dir, "input.json");
+      const outDir = path.join(dir, "output");
+      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+
+      const jsonResult = await runCli([input, "-f", "cpa", "-o", outDir], {
+        stdout: "",
+        stderr: "",
+      });
+
+      const jsonPath = path.join(outDir, "cpa_user_example.com.json");
+      expect(jsonResult.exitCode).toBe(0);
+      await expect(modeBits(outDir)).resolves.toBe(0o700);
+      await expect(modeBits(jsonPath)).resolves.toBe(0o600);
+
+      const zipDir = path.join(dir, "zip-output");
+      const zipResult = await runCli([input, "-f", "cpa,sub2api", "--zip", "-o", zipDir], {
+        stdout: "",
+        stderr: "",
+      });
+      const zipFiles = (await readdir(zipDir)).filter((fileName) => fileName.endsWith(".zip"));
+      expect(zipResult.exitCode).toBe(0);
+      expect(zipFiles).toHaveLength(1);
+      await expect(modeBits(zipDir)).resolves.toBe(0o700);
+      await expect(modeBits(path.join(zipDir, zipFiles[0]))).resolves.toBe(0o600);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -374,6 +412,30 @@ describe("authconv CLI", () => {
     expect(result.stdout).toBe("");
   });
 
+  it("groups repeated warnings by warning count instead of listing files", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-warning-group-"));
+    try {
+      const input = path.join(dir, "input.json");
+      const outDir = path.join(dir, "output");
+      await writeFile(input, JSON.stringify([
+        { access_token: "access-a", email: "first@example.com" },
+        { access_token: "access-b", email: "second@example.com" },
+      ]));
+
+      const result = await runCli([input, "-f", "cpa", "--jsonl", "-o", outDir, "--lang", "en"], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain("missing refresh_token (2 warnings)");
+      expect(result.stderr).not.toContain("(2 files)");
+      expect(result.stderr).not.toContain("input.json,");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("writes a zip archive when --zip is set", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-zip-"));
     try {
@@ -390,7 +452,9 @@ describe("authconv CLI", () => {
       expect(result.stdout).toBe("");
       const zipFiles = (await readdir(outDir)).filter((fileName) => fileName.endsWith(".zip"));
       expect(zipFiles).toHaveLength(1);
-      const archive = unzipSync(await readFile(path.join(outDir, zipFiles[0])));
+      const zipPath = path.join(outDir, zipFiles[0]);
+      expect(result.stderr).toContain(zipPath);
+      const archive = unzipSync(await readFile(zipPath));
 
       expect(JSON.parse(strFromU8(archive["cpa/cpa_user_example.com.json"]))).toMatchObject({
         type: "codex",

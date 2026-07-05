@@ -40,7 +40,7 @@ function detectArrayItemFormat(input: Record<string, unknown>): InputFormat {
   if (format !== "unknown") {
     return format;
   }
-  if (typeof input.refresh_token === "string" && typeof input.session_token === "string") {
+  if (isCodex2ApiLooseRecord(input)) {
     return "codex2api";
   }
   return "unknown";
@@ -81,11 +81,22 @@ function detectRecordInputFormat(input: Record<string, unknown>): InputFormat {
   }
 
   // Codex2Api single object
-  if (typeof input.refresh_token === "string" && typeof input.session_token === "string" && !isRecord(input.tokens)) {
+  if (isCodex2ApiLooseRecord(input)) {
     return "codex2api";
   }
 
   return "unknown";
+}
+
+function isCodex2ApiLooseRecord(input: Record<string, unknown>): boolean {
+  return (
+    typeof input.refresh_token === "string" &&
+    typeof input.session_token === "string" &&
+    !isRecord(input.credentials) &&
+    !isRecord(input.tokens) &&
+    !Array.isArray(input.accounts) &&
+    input.type !== "codex"
+  );
 }
 
 export function normalizeInput(input: unknown, source: NormalizeSource, options: NormalizeOptions = {}): NormalizeResult {
@@ -567,8 +578,7 @@ function accountDedupeKey(account: NormalizedAccount): string {
 }
 
 /**
- * 按凭证内容去重，忽略来源元数据（sourceName/sourcePath/warnings/inputFormat）。
- * 同一凭证从不同文件导入时视为重复，保留首次出现的一条。
+ * 按归一化账号对象去重，忽略来源元数据（sourceName/sourcePath/warnings/inputFormat）。
  */
 export function dedupeAccounts(accounts: NormalizedAccount[]): NormalizedAccount[] {
   const seen = new Set<string>();

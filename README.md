@@ -24,7 +24,7 @@ ChatGPT / Codex OAuth 凭证格式转换工具。
 功能：
 
 - 纯浏览器端运行，零上传
-- 拖拽或选择 JSON / JSONL 文件或文件夹，或粘贴内容
+- 拖拽 JSON / JSONL 文件或文件夹，或粘贴内容；支持的浏览器也可直接选择文件夹
 - 支持多格式导出，sub2api / codex2api 可选聚合或单账号模式
 - JSONL 单行输出
 - 账号列表预览、输出预览、复制、JSON / ZIP 下载
@@ -37,6 +37,8 @@ ChatGPT / Codex OAuth 凭证格式转换工具。
 ## CLI 版
 
 ### 安装
+
+需要 Node.js 20.19.0 或更新版本。
 
 ```bash
 git clone https://github.com/ltxgit/authconv.git
@@ -66,7 +68,7 @@ node dist/cli.mjs creds.json -f all -o out/
 npm unlink -g authconv
 ```
 
-输入路径支持文件和目录，可一次传多个。输入内容支持单个 JSON、JSONL，以及连续拼接的多个完整 JSON 文档。
+输入路径支持文件和目录，可一次传多个。Shell 展开的 `*.json` 这类通配符会作为多路径输入传给 `authconv`，所以可以直接批量转换。输入内容支持单个 JSON、JSONL，以及连续拼接的多个完整 JSON 文档。
 完全无参数时显示帮助；从 stdin 读取时必须显式传 `--stdin`。
 
 ### 使用
@@ -99,6 +101,15 @@ authconv creds.json -f cpa,sub2api -o out/
 
 # 批量转换目录里的 json/jsonl
 authconv accounts/ -f all -o out/
+
+# 使用 shell 通配符批量输入
+authconv *.json -f cpa
+
+# 只转换文件名包含指定 workspace 标识的 JSON
+authconv *workspace-id*.json -f cpa
+
+# 文件、目录、通配符可以混用
+authconv current.json archive/ exports/*.json -f all
 
 # 输出一个 zip
 authconv accounts/ -f all --zip -o out/
@@ -147,7 +158,7 @@ authconv merged.json -f sub2api --mode sub2api=single -o out/
 authconv accounts/ -f cpa --jsonl
 ```
 
-JSONL 模式将每个输出 JSON 压缩为单行。Web 版 JSONL 会强制 `sub2api` / `codex2api` 按单账号输出。
+JSONL 模式将每个输出 JSON 压缩为单行，并强制 `sub2api` / `codex2api` 按单账号输出。
 
 ### 其他选项
 

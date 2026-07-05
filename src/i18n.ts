@@ -74,6 +74,10 @@ export const FORMAT_LABELS: Record<OutputFormat, string> = {
   codex: "Codex Auth",
 };
 
+function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
 type CliMessages = {
   help: (version: string) => string;
   inputPathSource: string;
@@ -108,7 +112,8 @@ type CliMessages = {
     started: (url: string) => string;
   };
   summary: {
-    human: (accountCount: number, fileCount: number, formats: string, outputRoot?: string) => string;
+    human: (accountCount: number, fileCount: number, formatCount: number, formats: string, outputRoot?: string) => string;
+    humanFile: (accountCount: number, formatCount: number, formats: string, targetPath: string) => string;
     inspectColumns: string[];
     unknownAccount: string;
     missingValue: string;
@@ -292,18 +297,15 @@ export const MESSAGES: Record<Locale, Messages> = {
         started: (url) => `Web UI 已启动: ${url}\n按 Ctrl+C 退出。\n`,
       },
       summary: {
-        human: (accountCount, fileCount, formats, outputRoot) => `识别 ${accountCount} 个账号，转为 ${formats} 格式，写入 ${fileCount} 个文件${outputRoot ? `到 ${outputRoot}` : ""}`,
+        human: (accountCount, fileCount, _formatCount, formats, outputRoot) => `识别 ${accountCount} 个账号，转为 ${formats} 格式，写入 ${fileCount} 个文件${outputRoot ? `到 ${outputRoot}` : ""}`,
+        humanFile: (accountCount, _formatCount, formats, targetPath) => `识别 ${accountCount} 个账号，转为 ${formats} 格式，写入 ${targetPath}`,
         inspectColumns: ["#", "邮箱", "account_id", "套餐", "过期"],
         unknownAccount: "unknown",
         missingValue: "—",
         dryRun: (accountCount, fileCount, outputRoot) => `识别 ${accountCount} 个账号，将写入 ${fileCount} 个文件到 ${outputRoot}`,
         fileLine: (filePath, accountCount) => `- ${filePath} (${accountCount} 个账号)`,
         warning: "warning",
-        groupedWarnings: (message, sources) => {
-          const truncated = sources.slice(0, 3);
-          const suffix = sources.length > 3 ? "..." : "";
-          return `${message} (${sources.length}个文件: ${truncated.join(", ")}${suffix})`;
-        },
+        groupedWarnings: (message, sources) => `${message} (${sources.length} 条 warning)`,
       },
     },
     normalize: {
@@ -489,18 +491,15 @@ Options:
         started: (url) => `Web UI started: ${url}\nPress Ctrl+C to stop.\n`,
       },
       summary: {
-        human: (accountCount, fileCount, formats, outputRoot) => `Found ${accountCount} account(s), converted to ${formats} format, wrote ${fileCount} file(s)${outputRoot ? ` to ${outputRoot}` : ""}`,
+        human: (accountCount, fileCount, formatCount, formats, outputRoot) => `Found ${plural(accountCount, "account")}, converted to ${formats} ${formatCount === 1 ? "format" : "formats"}, wrote ${plural(fileCount, "file")}${outputRoot ? ` to ${outputRoot}` : ""}`,
+        humanFile: (accountCount, formatCount, formats, targetPath) => `Found ${plural(accountCount, "account")}, converted to ${formats} ${formatCount === 1 ? "format" : "formats"}, wrote ${targetPath}`,
         inspectColumns: ["#", "email", "account_id", "plan", "expires"],
         unknownAccount: "unknown",
         missingValue: "-",
-        dryRun: (accountCount, fileCount, outputRoot) => `Found ${accountCount} account(s), would write ${fileCount} file(s) to ${outputRoot}`,
-        fileLine: (filePath, accountCount) => `- ${filePath} (${accountCount} account(s))`,
+        dryRun: (accountCount, fileCount, outputRoot) => `Found ${plural(accountCount, "account")}, would write ${plural(fileCount, "file")} to ${outputRoot}`,
+        fileLine: (filePath, accountCount) => `- ${filePath} (${plural(accountCount, "account")})`,
         warning: "warning",
-        groupedWarnings: (message, sources) => {
-          const truncated = sources.slice(0, 3);
-          const suffix = sources.length > 3 ? "..." : "";
-          return `${message} (${sources.length} files: ${truncated.join(", ")}${suffix})`;
-        },
+        groupedWarnings: (message, sources) => `${message} (${plural(sources.length, "warning")})`,
       },
     },
     normalize: {

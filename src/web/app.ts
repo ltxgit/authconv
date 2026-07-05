@@ -406,6 +406,7 @@ function bindEvents(): void {
 
   els.fakeIdToggle.addEventListener("change", () => {
     state.allowSyntheticIdToken = els.fakeIdToggle.checked;
+    writeOutputOptionsToUrl();
     recompute();
   });
 

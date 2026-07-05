@@ -366,6 +366,9 @@ var FORMAT_LABELS = {
   codexmanager: "Codex Manager",
   codex: "Codex Auth"
 };
+function plural(count, singular, pluralForm = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
 var MESSAGES = {
   zh: {
     cli: {
@@ -438,18 +441,15 @@ var MESSAGES = {
 `
       },
       summary: {
-        human: (accountCount, fileCount, formats, outputRoot) => `\u8BC6\u522B ${accountCount} \u4E2A\u8D26\u53F7\uFF0C\u8F6C\u4E3A ${formats} \u683C\u5F0F\uFF0C\u5199\u5165 ${fileCount} \u4E2A\u6587\u4EF6${outputRoot ? `\u5230 ${outputRoot}` : ""}`,
+        human: (accountCount, fileCount, _formatCount, formats, outputRoot) => `\u8BC6\u522B ${accountCount} \u4E2A\u8D26\u53F7\uFF0C\u8F6C\u4E3A ${formats} \u683C\u5F0F\uFF0C\u5199\u5165 ${fileCount} \u4E2A\u6587\u4EF6${outputRoot ? `\u5230 ${outputRoot}` : ""}`,
+        humanFile: (accountCount, _formatCount, formats, targetPath) => `\u8BC6\u522B ${accountCount} \u4E2A\u8D26\u53F7\uFF0C\u8F6C\u4E3A ${formats} \u683C\u5F0F\uFF0C\u5199\u5165 ${targetPath}`,
         inspectColumns: ["#", "\u90AE\u7BB1", "account_id", "\u5957\u9910", "\u8FC7\u671F"],
         unknownAccount: "unknown",
         missingValue: "\u2014",
         dryRun: (accountCount, fileCount, outputRoot) => `\u8BC6\u522B ${accountCount} \u4E2A\u8D26\u53F7\uFF0C\u5C06\u5199\u5165 ${fileCount} \u4E2A\u6587\u4EF6\u5230 ${outputRoot}`,
         fileLine: (filePath, accountCount) => `- ${filePath} (${accountCount} \u4E2A\u8D26\u53F7)`,
         warning: "warning",
-        groupedWarnings: (message, sources) => {
-          const truncated = sources.slice(0, 3);
-          const suffix = sources.length > 3 ? "..." : "";
-          return `${message} (${sources.length}\u4E2A\u6587\u4EF6: ${truncated.join(", ")}${suffix})`;
-        }
+        groupedWarnings: (message, sources) => `${message} (${sources.length} \u6761 warning)`
       }
     },
     normalize: {
@@ -637,18 +637,15 @@ Press Ctrl+C to stop.
 `
       },
       summary: {
-        human: (accountCount, fileCount, formats, outputRoot) => `Found ${accountCount} account(s), converted to ${formats} format, wrote ${fileCount} file(s)${outputRoot ? ` to ${outputRoot}` : ""}`,
+        human: (accountCount, fileCount, formatCount, formats, outputRoot) => `Found ${plural(accountCount, "account")}, converted to ${formats} ${formatCount === 1 ? "format" : "formats"}, wrote ${plural(fileCount, "file")}${outputRoot ? ` to ${outputRoot}` : ""}`,
+        humanFile: (accountCount, formatCount, formats, targetPath) => `Found ${plural(accountCount, "account")}, converted to ${formats} ${formatCount === 1 ? "format" : "formats"}, wrote ${targetPath}`,
         inspectColumns: ["#", "email", "account_id", "plan", "expires"],
         unknownAccount: "unknown",
         missingValue: "-",
-        dryRun: (accountCount, fileCount, outputRoot) => `Found ${accountCount} account(s), would write ${fileCount} file(s) to ${outputRoot}`,
-        fileLine: (filePath, accountCount) => `- ${filePath} (${accountCount} account(s))`,
+        dryRun: (accountCount, fileCount, outputRoot) => `Found ${plural(accountCount, "account")}, would write ${plural(fileCount, "file")} to ${outputRoot}`,
+        fileLine: (filePath, accountCount) => `- ${filePath} (${plural(accountCount, "account")})`,
         warning: "warning",
-        groupedWarnings: (message, sources) => {
-          const truncated = sources.slice(0, 3);
-          const suffix = sources.length > 3 ? "..." : "";
-          return `${message} (${sources.length} files: ${truncated.join(", ")}${suffix})`;
-        }
+        groupedWarnings: (message, sources) => `${message} (${plural(sources.length, "warning")})`
       }
     },
     normalize: {
@@ -1057,7 +1054,7 @@ function detectArrayItemFormat(input) {
   if (format !== "unknown") {
     return format;
   }
-  if (typeof input.refresh_token === "string" && typeof input.session_token === "string") {
+  if (isCodex2ApiLooseRecord(input)) {
     return "codex2api";
   }
   return "unknown";
@@ -1086,10 +1083,13 @@ function detectRecordInputFormat(input) {
   if (isRecord(input.tokens) && isRecord(input.meta)) {
     return "codexmanager";
   }
-  if (typeof input.refresh_token === "string" && typeof input.session_token === "string" && !isRecord(input.tokens)) {
+  if (isCodex2ApiLooseRecord(input)) {
     return "codex2api";
   }
   return "unknown";
+}
+function isCodex2ApiLooseRecord(input) {
+  return typeof input.refresh_token === "string" && typeof input.session_token === "string" && !isRecord(input.credentials) && !isRecord(input.tokens) && !Array.isArray(input.accounts) && input.type !== "codex";
 }
 function normalizeInput(input, source, options = {}) {
   const locale = options.locale ?? DEFAULT_LOCALE;
@@ -2439,12 +2439,12 @@ async function runCli(args, io = {}) {
       if (!parsed.force) {
         await assertTargetAvailable(targetPath, parsed.locale);
       }
-      await mkdir(outputRoot, { recursive: true });
-      await writeFile(targetPath, zipOutputFiles(serializedFiles));
+      await mkdir(outputRoot, { recursive: true, mode: 448 });
+      await writeFile(targetPath, zipOutputFiles(serializedFiles), { mode: 384 });
       return {
         exitCode: 0,
         stdout: "",
-        stderr: humanSummary(normalized.accounts.length, 1, formats, visibleWarnings, outputRoot, parsed.locale)
+        stderr: fileSummary(normalized.accounts.length, formats, targetPath, visibleWarnings, parsed.locale)
       };
     }
     if (!parsed.force) {
@@ -2452,13 +2452,14 @@ async function runCli(args, io = {}) {
     }
     for (const file of serializedFiles) {
       const targetPath = path.join(outputRoot, file.path);
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, file.text, "utf8");
+      await mkdir(path.dirname(targetPath), { recursive: true, mode: 448 });
+      await writeFile(targetPath, file.text, { encoding: "utf8", mode: 384 });
     }
+    const singleTargetPath = serializedFiles.length === 1 ? path.join(outputRoot, serializedFiles[0].path) : void 0;
     return {
       exitCode: 0,
       stdout: "",
-      stderr: humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale)
+      stderr: singleTargetPath ? fileSummary(normalized.accounts.length, formats, singleTargetPath, visibleWarnings, parsed.locale) : humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale)
     };
   } catch (error) {
     if (error instanceof CliError) {
@@ -2890,12 +2891,24 @@ function outputWarnings(result, locale, allowSyntheticIdToken) {
 function humanSummary(accountCount, fileCount, formats, warnings, outputRoot, locale) {
   const messages = messagesFor(locale).cli.summary;
   const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
-  const lines = [messages.human(accountCount, fileCount, formatLabels, outputRoot)];
+  const lines = [messages.human(accountCount, fileCount, formats.length, formatLabels, outputRoot)];
+  appendWarnings(lines, warnings, locale);
+  return `${lines.join("\n")}
+`;
+}
+function fileSummary(accountCount, formats, targetPath, warnings, locale) {
+  const messages = messagesFor(locale).cli.summary;
+  const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
+  const lines = [messages.humanFile(accountCount, formats.length, formatLabels, targetPath)];
+  appendWarnings(lines, warnings, locale);
+  return `${lines.join("\n")}
+`;
+}
+function appendWarnings(lines, warnings, locale) {
+  const messages = messagesFor(locale).cli.summary;
   for (const warning of groupWarnings(warnings, locale)) {
     lines.push(`${messages.warning}: ${warning}`);
   }
-  return `${lines.join("\n")}
-`;
 }
 function inspectSummary(result, locale, allowSyntheticIdToken) {
   const messages = messagesFor(locale).cli.summary;
@@ -2921,7 +2934,8 @@ function inspectSummary(result, locale, allowSyntheticIdToken) {
 function dryRunSummary(accountCount, files, warnings, outputRoot, locale) {
   const messages = messagesFor(locale).cli.summary;
   const lines = [messages.dryRun(accountCount, files.length, outputRoot)];
-  for (const file of files) {
+  if (files.length === 1) {
+    const [file] = files;
     lines.push(messages.fileLine(file.path, file.accountCount));
   }
   for (const warning of groupWarnings(warnings, locale)) {

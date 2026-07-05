@@ -773,6 +773,14 @@ describe("authconv core", () => {
     }
   });
 
+  it("does not auto-detect aggregate-like objects as codex2api singles", () => {
+    expect(detectInputFormat({
+      refresh_token: "token",
+      session_token: "session",
+      accounts: [],
+    })).toBe("unknown");
+  });
+
   it("uses a selected input format as the parsing strategy", () => {
     const source = { sourceName: "input.json", sourcePath: "input.json" };
     const sub2apiInput = {

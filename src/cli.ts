@@ -179,12 +179,12 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
       if (!parsed.force) {
         await assertTargetAvailable(targetPath, parsed.locale);
       }
-      await mkdir(outputRoot, { recursive: true });
-      await writeFile(targetPath, zipOutputFiles(serializedFiles));
+      await mkdir(outputRoot, { recursive: true, mode: 0o700 });
+      await writeFile(targetPath, zipOutputFiles(serializedFiles), { mode: 0o600 });
       return {
         exitCode: 0,
         stdout: "",
-        stderr: humanSummary(normalized.accounts.length, 1, formats, visibleWarnings, outputRoot, parsed.locale),
+        stderr: fileSummary(normalized.accounts.length, formats, targetPath, visibleWarnings, parsed.locale),
       };
     }
 
@@ -194,14 +194,19 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
 
     for (const file of serializedFiles) {
       const targetPath = path.join(outputRoot, file.path);
-      await mkdir(path.dirname(targetPath), { recursive: true });
-      await writeFile(targetPath, file.text, "utf8");
+      await mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+      await writeFile(targetPath, file.text, { encoding: "utf8", mode: 0o600 });
     }
 
+    const singleTargetPath = serializedFiles.length === 1
+      ? path.join(outputRoot, serializedFiles[0].path)
+      : undefined;
     return {
       exitCode: 0,
       stdout: "",
-      stderr: humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale),
+      stderr: singleTargetPath
+        ? fileSummary(normalized.accounts.length, formats, singleTargetPath, visibleWarnings, parsed.locale)
+        : humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale),
     };
   } catch (error) {
     if (error instanceof CliError) {
@@ -696,14 +701,40 @@ function outputWarnings(result: NormalizeResult, locale: Locale, allowSyntheticI
   return result.warnings.filter((warning) => !syntheticWarnings.has(warning));
 }
 
-function humanSummary(accountCount: number, fileCount: number, formats: OutputFormat[], warnings: string[], outputRoot: string | undefined, locale: Locale): string {
+function humanSummary(
+  accountCount: number,
+  fileCount: number,
+  formats: OutputFormat[],
+  warnings: string[],
+  outputRoot: string | undefined,
+  locale: Locale,
+): string {
   const messages = messagesFor(locale).cli.summary;
   const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
-  const lines = [messages.human(accountCount, fileCount, formatLabels, outputRoot)];
+  const lines = [messages.human(accountCount, fileCount, formats.length, formatLabels, outputRoot)];
+  appendWarnings(lines, warnings, locale);
+  return `${lines.join("\n")}\n`;
+}
+
+function fileSummary(
+  accountCount: number,
+  formats: OutputFormat[],
+  targetPath: string,
+  warnings: string[],
+  locale: Locale,
+): string {
+  const messages = messagesFor(locale).cli.summary;
+  const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
+  const lines = [messages.humanFile(accountCount, formats.length, formatLabels, targetPath)];
+  appendWarnings(lines, warnings, locale);
+  return `${lines.join("\n")}\n`;
+}
+
+function appendWarnings(lines: string[], warnings: string[], locale: Locale): void {
+  const messages = messagesFor(locale).cli.summary;
   for (const warning of groupWarnings(warnings, locale)) {
     lines.push(`${messages.warning}: ${warning}`);
   }
-  return `${lines.join("\n")}\n`;
 }
 
 function inspectSummary(result: NormalizeResult, locale: Locale, allowSyntheticIdToken: boolean): string {
@@ -737,7 +768,8 @@ function dryRunSummary(
 ): string {
   const messages = messagesFor(locale).cli.summary;
   const lines = [messages.dryRun(accountCount, files.length, outputRoot)];
-  for (const file of files) {
+  if (files.length === 1) {
+    const [file] = files;
     lines.push(messages.fileLine(file.path, file.accountCount));
   }
   for (const warning of groupWarnings(warnings, locale)) {
