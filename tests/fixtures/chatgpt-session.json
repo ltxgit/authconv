@@ -1,0 +1,15 @@
+{
+  "user": {
+    "id": "user_fixture_123",
+    "email": "fixture@example.com",
+    "name": "Fixture User"
+  },
+  "account": {
+    "id": "personal_fixture_456",
+    "planType": "free",
+    "workspaceId": "workspace_fixture_789"
+  },
+  "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODMwNDA0MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJ3b3Jrc3BhY2VfZml4dHVyZV80NTYiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6InRlYW0iLCJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyX2ZpeHR1cmVfMTIzIn19.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+  "sessionToken": "fixture-session-token",
+  "expires": "2026-07-03T01:00:00.000Z"
+}

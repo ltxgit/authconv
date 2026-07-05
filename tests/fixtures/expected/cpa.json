@@ -1,0 +1,14 @@
+{
+  "type": "codex",
+  "email": "fixture@example.com",
+  "account_id": "workspace_fixture_456",
+  "plan_type": "team",
+  "id_token": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIiwiY3BhX3N5bnRoZXRpYyI6dHJ1ZX0.eyJpYXQiOjAsImV4cCI6MTc4MzA0MDQwMCwic3ViIjoidXNlcl9maXh0dXJlXzEyMyIsImVtYWlsIjoiZml4dHVyZUBleGFtcGxlLmNvbSIsIm5hbWUiOiJGaXh0dXJlIFVzZXIiLCJ3b3Jrc3BhY2VfaWQiOiJ3b3Jrc3BhY2VfZml4dHVyZV83ODkiLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoid29ya3NwYWNlX2ZpeHR1cmVfNDU2IiwiY2hhdGdwdF9wbGFuX3R5cGUiOiJ0ZWFtIiwiY2hhdGdwdF91c2VyX2lkIjoidXNlcl9maXh0dXJlXzEyMyIsInVzZXJfaWQiOiJ1c2VyX2ZpeHR1cmVfMTIzIiwiY2hhdGdwdF9hY2NvdW50X3VzZXJfaWQiOiJ1c2VyX2ZpeHR1cmVfMTIzX193b3Jrc3BhY2VfZml4dHVyZV80NTYiLCJ3b3Jrc3BhY2VfaWQiOiJ3b3Jrc3BhY2VfZml4dHVyZV83ODkifX0.bGFudl9hdXRoY29udg",
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3ODMwNDA0MDAsImh0dHBzOi8vYXBpLm9wZW5haS5jb20vYXV0aCI6eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJ3b3Jrc3BhY2VfZml4dHVyZV80NTYiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6InRlYW0iLCJjaGF0Z3B0X3VzZXJfaWQiOiJ1c2VyX2ZpeHR1cmVfMTIzIn19.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+  "refresh_token": "",
+  "expired": "2026-07-03T01:00:00.000Z",
+  "last_refresh": "2026-07-04T00:00:00.000Z",
+  "disabled": false,
+  "session_token": "fixture-session-token",
+  "id_token_synthetic": true
+}

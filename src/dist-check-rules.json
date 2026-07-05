@@ -1,0 +1,37 @@
+[
+  {
+    "label": "外部脚本",
+    "pattern": "<script\\b[^>]*\\bsrc\\s*=\\s*[\"']https?:",
+    "flags": "i"
+  },
+  {
+    "label": "外部样式",
+    "pattern": "<link\\b[^>]*\\bhref\\s*=\\s*[\"']https?:",
+    "flags": "i"
+  },
+  {
+    "label": "CDN 引用",
+    "pattern": "//cdn",
+    "flags": "i"
+  },
+  {
+    "label": "sourcemap 引用",
+    "pattern": "sourceMappingURL"
+  },
+  {
+    "label": "storage API",
+    "pattern": "\\b(?:window\\.)?(?:localStorage|sessionStorage|indexedDB)\\s*(?:[.[=]|;|\\()"
+  },
+  {
+    "label": "外部模块导入",
+    "pattern": "\\bimport\\s*\\("
+  },
+  {
+    "label": "未替换模板占位符",
+    "pattern": "__AUTHCONV_(?:CSS|JS)__"
+  },
+  {
+    "label": "固定导出时间戳",
+    "pattern": "now\\s*:\\s*new Date\\(0\\)"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "name": "authconv",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "authconv": "./dist/cli.mjs"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "build": "node scripts/build.mjs",
+    "check:dist": "node scripts/check-dist.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.1.0",
+    "esbuild": "0.25.11",
+    "typescript": "5.9.3",
+    "vitest": "4.0.7"
+  }
+}
