@@ -37,6 +37,12 @@ import {
   type AccountSourceKind,
 } from "./state-helpers.js";
 import { outputOptionsUrl, parseOutputOptionsSearch } from "./url-state.js";
+import {
+  readStoredPreferences,
+  writeStoredPreferences,
+  type ThemeMode,
+  type WebPreferences,
+} from "./preferences.js";
 
 const FORMATS: OutputFormat[] = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
 const INPUT_FORMAT_BADGE_LABELS: Record<InputFormat, string> = {
@@ -52,8 +58,6 @@ const SELECTABLE_INPUT_FORMATS: InputFormat[] = ["session", "sub2api", "cpa", "c
 const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
 
 const SESSION_URL = "https://chatgpt.com/api/auth/session";
-
-type ThemeMode = "system" | "light" | "dark";
 
 type FileSystemFileHandleLike = {
   kind: "file";
@@ -194,7 +198,9 @@ const tooltipTargets = new WeakSet<HTMLElement>();
 init();
 
 function init(): void {
+  applyStoredPreferences();
   applyOutputOptionsFromUrl();
+  syncPreferenceControls();
   applyLocale();
   applyTheme();
   renderFormatControls();
@@ -236,6 +242,7 @@ function bindEvents(): void {
       const val = tab.getAttribute("data-value");
       if (val && isThemeMode(val)) {
         state.themeMode = val;
+        persistPreferences();
         applyTheme();
         setThemeExpanded(false);
       }
@@ -270,7 +277,7 @@ function bindEvents(): void {
         return;
       }
       state.locale = locale;
-      writeOutputOptionsToUrl();
+      persistPreferenceState();
       applyLocale();
       renderFormatControls();
       recompute();
@@ -396,21 +403,21 @@ function bindEvents(): void {
     if (!state.selectedFormats.includes(state.previewFormat)) {
       state.previewFormat = state.selectedFormats[0] ?? "cpa";
     }
-    writeOutputOptionsToUrl();
+    persistPreferenceState();
     renderFormatControls();
     recomputeOutput();
   });
 
   els.jsonlToggle.addEventListener("change", () => {
     state.outputTextMode = els.jsonlToggle.checked ? "jsonl" : "json";
-    writeOutputOptionsToUrl();
+    persistPreferenceState();
     renderFormatControls();
     recomputeOutput();
   });
 
   els.fakeIdToggle.addEventListener("change", () => {
     state.allowSyntheticIdToken = els.fakeIdToggle.checked;
-    writeOutputOptionsToUrl();
+    persistPreferenceState();
     recomputeOutput();
   });
 
@@ -424,6 +431,7 @@ function bindEvents(): void {
 
   els.inputFormatSelect.addEventListener("change", () => {
     state.forcedInputFormat = els.inputFormatSelect.value as InputFormat | "auto";
+    persistPreferences();
     recompute();
   });
 
@@ -447,6 +455,7 @@ function bindEvents(): void {
     state.draftSource = undefined;
     state.sourceErrors = [];
     state.forcedInputFormat = "auto";
+    persistPreferences();
     recompute();
   });
 
@@ -486,7 +495,14 @@ function bindEvents(): void {
 }
 
 function applyOutputOptionsFromUrl(): void {
-  const options = parseOutputOptionsSearch(window.location.search);
+  applyPreferences(parseOutputOptionsSearch(window.location.search));
+}
+
+function applyStoredPreferences(): void {
+  applyPreferences(readStoredPreferences());
+}
+
+function applyPreferences(options: Partial<WebPreferences>): void {
   if (options.selectedFormats) {
     state.selectedFormats = options.selectedFormats;
   }
@@ -507,11 +523,39 @@ function applyOutputOptionsFromUrl(): void {
   }
   if (options.allowSyntheticIdToken !== undefined) {
     state.allowSyntheticIdToken = options.allowSyntheticIdToken;
-    els.fakeIdToggle.checked = options.allowSyntheticIdToken;
   }
   if (options.locale) {
     state.locale = options.locale;
   }
+  if (options.themeMode) {
+    state.themeMode = options.themeMode;
+  }
+  if (options.forcedInputFormat) {
+    state.forcedInputFormat = options.forcedInputFormat;
+  }
+}
+
+function syncPreferenceControls(): void {
+  els.fakeIdToggle.checked = state.allowSyntheticIdToken;
+  els.jsonlToggle.checked = state.outputTextMode === "jsonl";
+}
+
+function persistPreferenceState(): void {
+  writeOutputOptionsToUrl();
+  persistPreferences();
+}
+
+function persistPreferences(): void {
+  writeStoredPreferences({
+    selectedFormats: state.selectedFormats,
+    outputTextMode: state.outputTextMode,
+    outputModes: state.outputModes,
+    previewFormat: state.previewFormat,
+    allowSyntheticIdToken: state.allowSyntheticIdToken,
+    locale: state.locale,
+    themeMode: state.themeMode,
+    forcedInputFormat: state.forcedInputFormat,
+  });
 }
 
 function writeOutputOptionsToUrl(): void {
@@ -625,7 +669,7 @@ function renderFormatControls(): void {
         if (!state.selectedFormats.includes(state.previewFormat)) {
           state.previewFormat = state.selectedFormats[0] ?? "cpa";
         }
-        writeOutputOptionsToUrl();
+        persistPreferenceState();
         renderFormatControls();
         recomputeOutput();
       });
@@ -670,7 +714,7 @@ function renderFormatControls(): void {
         tab.textContent = FORMAT_LABELS[format];
         tab.addEventListener("click", () => {
           state.previewFormat = format;
-          writeOutputOptionsToUrl();
+          persistPreferenceState();
           syncPreviewTabs();
           recomputeOutput();
         });
@@ -681,7 +725,8 @@ function renderFormatControls(): void {
           event.preventDefault();
           const nextIndex = previewTabIndex(index, previewFormats.length, event.key);
           state.previewFormat = previewFormats[nextIndex] ?? state.previewFormat;
-          writeOutputOptionsToUrl();
+          persistPreferenceState();
+          syncPreviewTabs();
           recomputeOutput();
           const tabs = Array.from(els.previewTabsContainer.querySelectorAll<HTMLButtonElement>(".editor-tab"));
           tabs[nextIndex]?.focus();
@@ -1584,7 +1629,7 @@ function renderFormatModeControl(format: OutputFormat): HTMLSpanElement {
       ...state.outputModes,
       [format]: nextMode,
     };
-    writeOutputOptionsToUrl();
+    persistPreferenceState();
     renderFormatControls();
     recomputeOutput();
   });

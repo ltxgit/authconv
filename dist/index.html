@@ -5181,6 +5181,117 @@ Example:
     return value === "merged" || value === "single";
   }
 
+  // src/web/preferences.ts
+  var PREFERENCES_STORAGE_KEY = "authconv.preferences.v1";
+  var OUTPUT_FORMATS2 = new Set(ALL_FORMATS);
+  var MODE_FORMATS2 = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var INPUT_FORMATS = /* @__PURE__ */ new Set([
+    "auto",
+    "session",
+    "sub2api",
+    "cpa",
+    "codexmanager",
+    "codex2api",
+    "codex"
+  ]);
+  function readStoredPreferences(storage = browserPreferenceStorage()) {
+    if (!storage) {
+      return {};
+    }
+    try {
+      return parseStoredPreferences(storage.getItem(PREFERENCES_STORAGE_KEY));
+    } catch {
+      return {};
+    }
+  }
+  function writeStoredPreferences(preferences, storage = browserPreferenceStorage()) {
+    if (!storage) {
+      return;
+    }
+    try {
+      storage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify(sanitizePreferences(preferences)));
+    } catch {
+    }
+  }
+  function parseStoredPreferences(raw) {
+    if (!raw) {
+      return {};
+    }
+    try {
+      return sanitizePreferences(JSON.parse(raw));
+    } catch {
+      return {};
+    }
+  }
+  function sanitizePreferences(value) {
+    if (!isRecord2(value)) {
+      return {};
+    }
+    const selectedFormats = parseFormats2(value.selectedFormats);
+    const outputTextMode = parseOutputTextMode(value.outputTextMode);
+    const outputModes = parseOutputModes2(value.outputModes);
+    const previewFormat = parseOutputFormat(value.previewFormat);
+    const allowSyntheticIdToken = typeof value.allowSyntheticIdToken === "boolean" ? value.allowSyntheticIdToken : void 0;
+    const locale = typeof value.locale === "string" ? normalizeLocale(value.locale) : void 0;
+    const themeMode = parseThemeMode(value.themeMode);
+    const forcedInputFormat = parseInputFormat(value.forcedInputFormat);
+    return {
+      ...selectedFormats ? { selectedFormats } : {},
+      ...outputTextMode ? { outputTextMode } : {},
+      ...Object.keys(outputModes).length > 0 ? { outputModes } : {},
+      ...previewFormat ? { previewFormat } : {},
+      ...allowSyntheticIdToken !== void 0 ? { allowSyntheticIdToken } : {},
+      ...locale ? { locale } : {},
+      ...themeMode ? { themeMode } : {},
+      ...forcedInputFormat ? { forcedInputFormat } : {}
+    };
+  }
+  function browserPreferenceStorage() {
+    try {
+      return globalThis.localStorage;
+    } catch {
+      return void 0;
+    }
+  }
+  function parseFormats2(value) {
+    if (!Array.isArray(value)) {
+      return void 0;
+    }
+    const selected = new Set(value.filter((item) => parseOutputFormat(item) !== void 0));
+    const formats = ALL_FORMATS.filter((format) => selected.has(format));
+    return formats.length > 0 || value.length === 0 ? formats : void 0;
+  }
+  function parseOutputFormat(value) {
+    return typeof value === "string" && OUTPUT_FORMATS2.has(value) ? value : void 0;
+  }
+  function parseOutputTextMode(value) {
+    return value === "json" || value === "jsonl" ? value : void 0;
+  }
+  function parseOutputModes2(value) {
+    if (!isRecord2(value)) {
+      return {};
+    }
+    const outputModes = {};
+    for (const format of ALL_FORMATS) {
+      if (MODE_FORMATS2.has(format) && isOutputMode2(value[format])) {
+        outputModes[format] = value[format];
+      }
+    }
+    return outputModes;
+  }
+  function isOutputMode2(value) {
+    return value === "merged" || value === "single";
+  }
+  function parseThemeMode(value) {
+    return value === "system" || value === "light" || value === "dark" ? value : void 0;
+  }
+  function parseInputFormat(value) {
+    return typeof value === "string" && INPUT_FORMATS.has(value) ? value : void 0;
+  }
+  function isRecord2(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  }
+
   // src/web/app.ts
   var FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
   var INPUT_FORMAT_BADGE_LABELS = {
@@ -5193,7 +5304,7 @@ Example:
     unknown: "Unknown"
   };
   var SELECTABLE_INPUT_FORMATS = ["session", "sub2api", "cpa", "codexmanager", "codex2api", "codex"];
-  var MODE_FORMATS2 = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var MODE_FORMATS3 = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
   var SESSION_URL = "https://chatgpt.com/api/auth/session";
   var state = {
     sourceErrors: [],
@@ -5254,7 +5365,9 @@ Example:
   var tooltipTargets = /* @__PURE__ */ new WeakSet();
   init();
   function init() {
+    applyStoredPreferences();
     applyOutputOptionsFromUrl();
+    syncPreferenceControls();
     applyLocale();
     applyTheme();
     renderFormatControls();
@@ -5287,6 +5400,7 @@ Example:
         const val = tab.getAttribute("data-value");
         if (val && isThemeMode(val)) {
           state.themeMode = val;
+          persistPreferences();
           applyTheme();
           setThemeExpanded(false);
         }
@@ -5315,7 +5429,7 @@ Example:
           return;
         }
         state.locale = locale;
-        writeOutputOptionsToUrl();
+        persistPreferenceState();
         applyLocale();
         renderFormatControls();
         recompute();
@@ -5429,19 +5543,19 @@ Example:
       if (!state.selectedFormats.includes(state.previewFormat)) {
         state.previewFormat = state.selectedFormats[0] ?? "cpa";
       }
-      writeOutputOptionsToUrl();
+      persistPreferenceState();
       renderFormatControls();
       recomputeOutput();
     });
     els.jsonlToggle.addEventListener("change", () => {
       state.outputTextMode = els.jsonlToggle.checked ? "jsonl" : "json";
-      writeOutputOptionsToUrl();
+      persistPreferenceState();
       renderFormatControls();
       recomputeOutput();
     });
     els.fakeIdToggle.addEventListener("change", () => {
       state.allowSyntheticIdToken = els.fakeIdToggle.checked;
-      writeOutputOptionsToUrl();
+      persistPreferenceState();
       recomputeOutput();
     });
     els.copyButton.addEventListener("click", () => {
@@ -5452,6 +5566,7 @@ Example:
     });
     els.inputFormatSelect.addEventListener("change", () => {
       state.forcedInputFormat = els.inputFormatSelect.value;
+      persistPreferences();
       recompute();
     });
     els.clearAccountsButton.addEventListener("click", () => {
@@ -5471,6 +5586,7 @@ Example:
       state.draftSource = void 0;
       state.sourceErrors = [];
       state.forcedInputFormat = "auto";
+      persistPreferences();
       recompute();
     });
     els.accountRows.addEventListener("click", (event) => {
@@ -5507,7 +5623,12 @@ Example:
     });
   }
   function applyOutputOptionsFromUrl() {
-    const options = parseOutputOptionsSearch(window.location.search);
+    applyPreferences(parseOutputOptionsSearch(window.location.search));
+  }
+  function applyStoredPreferences() {
+    applyPreferences(readStoredPreferences());
+  }
+  function applyPreferences(options) {
     if (options.selectedFormats) {
       state.selectedFormats = options.selectedFormats;
     }
@@ -5528,11 +5649,36 @@ Example:
     }
     if (options.allowSyntheticIdToken !== void 0) {
       state.allowSyntheticIdToken = options.allowSyntheticIdToken;
-      els.fakeIdToggle.checked = options.allowSyntheticIdToken;
     }
     if (options.locale) {
       state.locale = options.locale;
     }
+    if (options.themeMode) {
+      state.themeMode = options.themeMode;
+    }
+    if (options.forcedInputFormat) {
+      state.forcedInputFormat = options.forcedInputFormat;
+    }
+  }
+  function syncPreferenceControls() {
+    els.fakeIdToggle.checked = state.allowSyntheticIdToken;
+    els.jsonlToggle.checked = state.outputTextMode === "jsonl";
+  }
+  function persistPreferenceState() {
+    writeOutputOptionsToUrl();
+    persistPreferences();
+  }
+  function persistPreferences() {
+    writeStoredPreferences({
+      selectedFormats: state.selectedFormats,
+      outputTextMode: state.outputTextMode,
+      outputModes: state.outputModes,
+      previewFormat: state.previewFormat,
+      allowSyntheticIdToken: state.allowSyntheticIdToken,
+      locale: state.locale,
+      themeMode: state.themeMode,
+      forcedInputFormat: state.forcedInputFormat
+    });
   }
   function writeOutputOptionsToUrl() {
     window.history.replaceState(
@@ -5634,7 +5780,7 @@ Example:
           if (!state.selectedFormats.includes(state.previewFormat)) {
             state.previewFormat = state.selectedFormats[0] ?? "cpa";
           }
-          writeOutputOptionsToUrl();
+          persistPreferenceState();
           renderFormatControls();
           recomputeOutput();
         });
@@ -5675,7 +5821,7 @@ Example:
           tab.textContent = FORMAT_LABELS[format];
           tab.addEventListener("click", () => {
             state.previewFormat = format;
-            writeOutputOptionsToUrl();
+            persistPreferenceState();
             syncPreviewTabs();
             recomputeOutput();
           });
@@ -5686,7 +5832,8 @@ Example:
             event.preventDefault();
             const nextIndex = previewTabIndex(index, previewFormats.length, event.key);
             state.previewFormat = previewFormats[nextIndex] ?? state.previewFormat;
-            writeOutputOptionsToUrl();
+            persistPreferenceState();
+            syncPreviewTabs();
             recomputeOutput();
             const tabs = Array.from(els.previewTabsContainer.querySelectorAll(".editor-tab"));
             tabs[nextIndex]?.focus();
@@ -6463,7 +6610,7 @@ Example:
         ...state.outputModes,
         [format]: nextMode
       };
-      writeOutputOptionsToUrl();
+      persistPreferenceState();
       renderFormatControls();
       recomputeOutput();
     });
@@ -6736,7 +6883,7 @@ Example:
     return value === "system" || value === "light" || value === "dark";
   }
   function isMergedFormat(format) {
-    return MODE_FORMATS2.has(format);
+    return MODE_FORMATS3.has(format);
   }
   function setText(id, text) {
     const element = document.getElementById(id);

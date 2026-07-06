@@ -19,8 +19,8 @@
     "pattern": "sourceMappingURL"
   },
   {
-    "label": "storage API",
-    "pattern": "\\b(?:window\\.)?(?:localStorage|sessionStorage|indexedDB)\\s*(?:[.[=]|;|\\()"
+    "label": "非偏好存储 API",
+    "pattern": "\\b(?:window\\.)?(?:sessionStorage|indexedDB)\\s*(?:[.[=]|;|\\()"
   },
   {
     "label": "外部模块导入",
