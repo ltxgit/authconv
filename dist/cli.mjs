@@ -322,7 +322,7 @@ function isOutputFormat(value) {
 }
 
 // src/i18n.ts
-var DEFAULT_LOCALE = "en";
+var DEFAULT_LOCALE = "zh";
 function normalizeLocale(value) {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) {
@@ -557,7 +557,7 @@ var MESSAGES = {
       jsonlTooltip: "JSONL\uFF1A\u884C\u5F0F JSON \u683C\u5F0F\uFF0C\u6BCF\u884C\u4E00\u4E2A\u8D26\u53F7\uFF08\u9002\u5408\u5355\u884C\u51ED\u636E\u5BFC\u5165\u7B49\u573A\u666F\uFF09\u3002",
       fakeIdTooltip: "\u5408\u6210 id_token\uFF1A\u9488\u5BF9\u7F3A\u5C11 id_token \u7684\u8D26\u53F7\u81EA\u52A8\u5408\u6210\u6A21\u62DF\u51ED\u636E\uFF0C\u4EE5\u517C\u5BB9 Codex Auth \u7B49\u4E0B\u6E38\u5DE5\u5177\u3002",
       codexManagerTooltip: "Codex-Manager \u683C\u5F0F\u3002",
-      codexTooltip: "Codex auth.json \u683C\u5F0F\u3002",
+      codexTooltip: "Codex auth.json \u683C\u5F0F\uFF0C\u53EF\u5BFC\u5165 Codex CLI\u3001Cockpit \u548C AxonHub \u7B49\u517C\u5BB9\u8BE5\u683C\u5F0F\u7684\u9879\u76EE\u3002",
       modeSingle: "\u5355\u4E2A",
       modeMerged: "\u805A\u5408",
       modeSingleTip: "\u5355\u4E2A\uFF1A\u6BCF\u8D26\u53F7 1 \u4E2A\u6587\u4EF6\u3002",
@@ -755,7 +755,7 @@ Example:
       jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
       fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
       codexManagerTooltip: "Codex-Manager format.",
-      codexTooltip: "Codex auth.json format.",
+      codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
       modeSingle: "Single",
       modeMerged: "Merged",
       modeSingleTip: "Single: one file per account.",
@@ -2722,8 +2722,12 @@ function safeFileSegment2(value) {
   return value.trim().replace(/[^\w\-.]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 96) || "account";
 }
 
+// src/version.ts
+var PACKAGE_VERSION = "0.1.1";
+var injectedVersion = true ? "0.1.1.dev".trim() : "";
+var VERSION = injectedVersion || PACKAGE_VERSION;
+
 // src/cli.ts
-var VERSION = "0.1.0";
 var CliError = class extends Error {
   constructor(exitCode, message) {
     super(message);

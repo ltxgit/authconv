@@ -31,12 +31,18 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
-      - name: Build
+      - name: Build committed dist
         run: npm run build
       - name: Check dist
         run: npm run check:dist
       - name: Verify committed dist
         run: git diff --exit-code -- dist/index.html dist/cli.mjs
+      - name: Build pages dist
+        if: github.event_name != 'pull_request'
+        run: AUTHCONV_BUILD_SHA="$GITHUB_SHA" npm run build
+      - name: Check pages dist
+        if: github.event_name != 'pull_request'
+        run: npm run check:dist
       - name: Upload pages artifact
         if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5

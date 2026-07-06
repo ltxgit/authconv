@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { buildDisplayVersion } from "./build-version.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = resolve(root, "dist");
@@ -14,6 +15,8 @@ const cliOut = resolve(distDir, "cli.mjs");
 
 await mkdir(distDir, { recursive: true });
 
+const displayVersion = await buildDisplayVersion(root);
+
 const [template, css, webBundle] = await Promise.all([
   readFile(templatePath, "utf8"),
   readFile(stylePath, "utf8"),
@@ -23,6 +26,9 @@ const [template, css, webBundle] = await Promise.all([
     format: "iife",
     platform: "browser",
     target: "es2020",
+    define: {
+      __AUTHCONV_VERSION__: JSON.stringify(displayVersion),
+    },
     sourcemap: false,
     minify: false,
     write: false,
@@ -35,7 +41,10 @@ if (!js) {
   throw new Error("浏览器入口构建未产生输出");
 }
 
-const html = template.replace("__AUTHCONV_CSS__", () => css).replace("__AUTHCONV_JS__", () => js);
+const html = template
+  .replace("__AUTHCONV_CSS__", () => css)
+  .replace("__AUTHCONV_JS__", () => js)
+  .replaceAll("__AUTHCONV_VERSION__", displayVersion);
 await writeFile(htmlOut, html, "utf8");
 
 await esbuild.build({
@@ -45,6 +54,9 @@ await esbuild.build({
   platform: "node",
   target: "node20",
   outfile: cliOut,
+  define: {
+    __AUTHCONV_VERSION__: JSON.stringify(displayVersion),
+  },
   sourcemap: false,
   minify: false,
   banner: {

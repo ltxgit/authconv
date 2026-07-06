@@ -27,6 +27,7 @@ import {
 } from "./import-sources.js";
 import { zipDownloadName } from "./download-names.js";
 import { isOutputFormat } from "./formats.js";
+import { VERSION } from "./version.js";
 import type {
   InputFormat,
   Locale,
@@ -38,8 +39,6 @@ import type {
   OutputTextMode,
   SerializedOutputFile,
 } from "./types.js";
-
-const VERSION = "0.1.0";
 
 export type CliIo = {
   stdin?: string;

@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { detectCliLocale, detectWebLocale, messagesFor } from "../src/index.js";
 
 describe("authconv i18n", () => {
-  it("defaults CLI language to English without explicit selection", () => {
-    expect(detectCliLocale(undefined, {})).toBe("en");
+  it("defaults CLI language to Chinese without explicit selection", () => {
+    expect(detectCliLocale(undefined, {})).toBe("zh");
   });
 
-  it("uses system locale before falling back to English", () => {
+  it("uses system locale before falling back to Chinese", () => {
     expect(
       detectCliLocale(undefined, {
         LC_ALL: "zh_CN.UTF-8",
@@ -21,8 +21,8 @@ describe("authconv i18n", () => {
     expect(detectCliLocale(undefined, { AUTHCONV_LANG: "zh" })).toBe("zh");
   });
 
-  it("defaults Web language to English without a URL parameter", () => {
-    expect(detectWebLocale("")).toBe("en");
+  it("defaults Web language to Chinese without a URL parameter", () => {
+    expect(detectWebLocale("")).toBe("zh");
     expect(detectWebLocale("?lang=zh")).toBe("zh");
   });
 

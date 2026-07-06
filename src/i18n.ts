@@ -1,6 +1,6 @@
 import type { InputFormat, Locale, OutputFormat, OutputMode } from "./types.js";
 
-export const DEFAULT_LOCALE: Locale = "en";
+export const DEFAULT_LOCALE: Locale = "zh";
 
 export function normalizeLocale(value: string | null | undefined): Locale | undefined {
   const normalized = value?.trim().toLowerCase();
@@ -415,7 +415,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       jsonlTooltip: "JSONL：行式 JSON 格式，每行一个账号（适合单行凭据导入等场景）。",
       fakeIdTooltip: "合成 id_token：针对缺少 id_token 的账号自动合成模拟凭据，以兼容 Codex Auth 等下游工具。",
       codexManagerTooltip: "Codex-Manager 格式。",
-      codexTooltip: "Codex auth.json 格式。",
+      codexTooltip: "Codex auth.json 格式，可导入 Codex CLI、Cockpit 和 AxonHub 等兼容该格式的项目。",
       modeSingle: "单个",
       modeMerged: "聚合",
       modeSingleTip: "单个：每账号 1 个文件。",
@@ -611,7 +611,7 @@ Example:
       jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
       fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
       codexManagerTooltip: "Codex-Manager format.",
-      codexTooltip: "Codex auth.json format.",
+      codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
       modeSingle: "Single",
       modeMerged: "Merged",
       modeSingleTip: "Single: one file per account.",

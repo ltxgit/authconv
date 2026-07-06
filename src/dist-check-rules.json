@@ -28,7 +28,7 @@
   },
   {
     "label": "未替换模板占位符",
-    "pattern": "__AUTHCONV_(?:CSS|JS)__"
+    "pattern": "__AUTHCONV_(?:CSS|JS|VERSION)__"
   },
   {
     "label": "固定导出时间戳",
