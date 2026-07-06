@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { runCli, startWebUiServer } from "../src/cli.js";
 
@@ -300,6 +300,76 @@ describe("authconv CLI", () => {
       expect(result.exitCode).toBe(0);
       const lines = await readJsonLines(path.join(outDir, "cpa_2-accounts.jsonl"));
       expect(lines.map((line) => (line as { email: string }).email)).toEqual(["first@example.com", "second@example.com"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("imports JSON and JSONL credential files from a ZIP input", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-zip-input-"));
+    try {
+      const input = path.join(dir, "bundle.zip");
+      const outDir = path.join(dir, "output");
+      await writeFile(input, zipSync({
+        "first.json": strToU8(JSON.stringify({ access_token: "access-token-a", email: "first@example.com" })),
+        "nested/second.jsonl": strToU8(`${JSON.stringify({ access_token: "access-token-b", email: "second@example.com" })}\n`),
+        "notes.txt": strToU8("ignore"),
+      }));
+
+      const result = await runCli([input, "-f", "cpa", "--jsonl", "--out-dir", outDir], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const lines = await readJsonLines(path.join(outDir, "cpa_2-accounts.jsonl"));
+      expect(lines.map((line) => (line as { email: string }).email)).toEqual(["first@example.com", "second@example.com"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("dedupes ZIP input accounts when credentials are compatible", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-zip-dedupe-"));
+    try {
+      const input = path.join(dir, "bundle.zip");
+      const outDir = path.join(dir, "output");
+      const accessToken = "same-access-token";
+      const refreshToken = "same-refresh-token";
+      const sessionToken = "same-session-token";
+      const idToken = "same-id-token";
+      const email = "same@example.com";
+      const accountId = "acct_same";
+      await writeFile(input, zipSync({
+        "first.json": strToU8(JSON.stringify({
+          type: "codex",
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          session_token: sessionToken,
+          id_token: idToken,
+          email,
+          account_id: accountId,
+          plan_type: "k12",
+        })),
+        "second.json": strToU8(JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          session_token: sessionToken,
+          id_token: idToken,
+          email,
+          account_id: accountId,
+        })),
+      }));
+
+      const result = await runCli([input, "-f", "cpa", "--jsonl", "--out-dir", outDir], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const lines = await readJsonLines(path.join(outDir, "cpa_same_example.com_acct_same.jsonl"));
+      expect(lines).toHaveLength(1);
+      expect((lines[0] as { email: string }).email).toBe(email);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -934,6 +1004,23 @@ describe("authconv CLI", () => {
     });
 
     expect(result.exitCode).toBe(3);
+  });
+
+  it("rejects unsupported input file extensions", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-extension-"));
+    try {
+      const input = path.join(dir, "input.txt");
+      await writeFile(input, JSON.stringify({ access_token: "access-token" }));
+
+      const result = await runCli([input, "-f", "cpa"], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(3);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects invalid mode values as argument errors", async () => {

@@ -745,16 +745,18 @@ describe("authconv core", () => {
       [
         [
           {
-            refresh_token: "token",
+            access_token: "access",
             session_token: "session",
+            id_token: "id",
           },
         ],
         "codex2api",
       ],
       [
         {
-          refresh_token: "token",
+          access_token: "access",
           session_token: "session",
+          id_token: "id",
         },
         "codex2api",
       ],
@@ -885,18 +887,89 @@ describe("authconv core", () => {
     expect(result.accounts[0].warnings.length).toBeGreaterThan(0);
   });
 
-  it("dedupes accounts by credential content, ignoring source metadata", async () => {
+  it("dedupes accounts when credential fields are compatible", async () => {
     const { dedupeAccounts } = await import("../src/index.js");
+    const idToken = fakeJwt({ email: "a@example.com" });
     const accounts = [
-      normalizeInput({ access_token: "token-a", email: "a@example.com" }, { sourceName: "file1.json", sourcePath: "file1.json" }).accounts[0],
-      normalizeInput({ access_token: "token-a", email: "a@example.com" }, { sourceName: "file2.json", sourcePath: "file2.json" }).accounts[0],
+      normalizeInput(
+        {
+          access_token: "token-a",
+          email: "a@example.com",
+        },
+        { sourceName: "file1.json", sourcePath: "file1.json" },
+      ).accounts[0],
+      normalizeInput(
+        {
+          access_token: "token-a",
+          refresh_token: "refresh-a",
+          session_token: "session-a",
+          id_token: idToken,
+          email: "a@example.com",
+          name: "Account A",
+        },
+        { sourceName: "file2.json", sourcePath: "file2.json" },
+      ).accounts[0],
       normalizeInput({ access_token: "token-b", email: "b@example.com" }, { sourceName: "file3.json", sourcePath: "file3.json" }).accounts[0],
     ];
     const deduped = dedupeAccounts(accounts);
     expect(deduped).toHaveLength(2);
     expect(deduped[0].email).toBe("a@example.com");
+    expect(deduped[0].refreshToken).toBe("refresh-a");
+    expect(deduped[0].sessionToken).toBe("session-a");
+    expect(deduped[0].idToken).toBe(idToken);
+    expect(deduped[0].name).toBe("Account A");
     expect(deduped[0].sourceName).toBe("file1.json");
     expect(deduped[1].email).toBe("b@example.com");
+  });
+
+  it("does not dedupe accounts when shared credential fields conflict", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput({ access_token: "same-access", session_token: "session-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
+      normalizeInput({ access_token: "same-access", session_token: "session-b", email: "b@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
+    ];
+    const deduped = dedupeAccounts(accounts);
+    expect(deduped).toHaveLength(2);
+  });
+
+  it("does not dedupe accounts without any shared credential field", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
+      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
+    ];
+    const deduped = dedupeAccounts(accounts);
+    expect(deduped).toHaveLength(2);
+  });
+
+  it("dedupes accounts through a later bridge credential", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
+      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
+      normalizeInput({ refresh_token: "refresh-token", session_token: "session-token" }, { sourceName: "bridge.json", sourcePath: "bridge.json" }).accounts[0],
+    ];
+    const deduped = dedupeAccounts(accounts);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0].email).toBe("refresh-only@example.com");
+    expect(deduped[0].sessionToken).toBe("session-token");
+  });
+
+  it("replaces a compatible synthetic id_token with a real id_token", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const synthetic = normalizeInput({
+      access_token: "same-access",
+      email: "same@example.com",
+    }, { sourceName: "synthetic.json", sourcePath: "synthetic.json" }).accounts[0];
+    const real = normalizeInput({
+      access_token: "same-access",
+      id_token: fakeJwt({ email: "same@example.com" }),
+      email: "same@example.com",
+    }, { sourceName: "real.json", sourcePath: "real.json" }).accounts[0];
+
+    const [deduped] = dedupeAccounts([synthetic, real]);
+    expect(deduped.idToken).toBe(real.idToken);
+    expect(deduped.idTokenSynthetic).toBe(false);
   });
 
   it("treats accounts with different tokens as distinct even if email matches", async () => {
@@ -904,6 +977,22 @@ describe("authconv core", () => {
     const accounts = [
       normalizeInput({ access_token: "token-a", email: "same@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
       normalizeInput({ access_token: "token-b", email: "same@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
+    ];
+    const deduped = dedupeAccounts(accounts);
+    expect(deduped).toHaveLength(2);
+  });
+
+  it("does not dedupe records without stable credentials", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput(
+        { id_token: fakeJwt({ email: "same@example.com" }), id_token_synthetic: true },
+        { sourceName: "a.json", sourcePath: "a.json" },
+      ).accounts[0],
+      normalizeInput(
+        { id_token: fakeJwt({ email: "same@example.com" }), id_token_synthetic: true },
+        { sourceName: "b.json", sourcePath: "b.json" },
+      ).accounts[0],
     ];
     const deduped = dedupeAccounts(accounts);
     expect(deduped).toHaveLength(2);

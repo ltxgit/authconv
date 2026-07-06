@@ -40,7 +40,7 @@ function detectArrayItemFormat(input: Record<string, unknown>): InputFormat {
   if (format !== "unknown") {
     return format;
   }
-  if (isCodex2ApiLooseRecord(input)) {
+  if (isCodex2ApiAutoRecord(input)) {
     return "codex2api";
   }
   return "unknown";
@@ -81,21 +81,22 @@ function detectRecordInputFormat(input: Record<string, unknown>): InputFormat {
   }
 
   // Codex2Api single object
-  if (isCodex2ApiLooseRecord(input)) {
+  if (isCodex2ApiAutoRecord(input)) {
     return "codex2api";
   }
 
   return "unknown";
 }
 
-function isCodex2ApiLooseRecord(input: Record<string, unknown>): boolean {
+function isCodex2ApiAutoRecord(input: Record<string, unknown>): boolean {
   return (
-    typeof input.refresh_token === "string" &&
-    typeof input.session_token === "string" &&
-    !isRecord(input.credentials) &&
-    !isRecord(input.tokens) &&
-    !Array.isArray(input.accounts) &&
-    input.type !== "codex"
+    isCodex2ApiRecord(input) &&
+    input.type === undefined &&
+    (
+      typeof input.refresh_token === "string" ||
+      typeof input.session_token === "string" ||
+      typeof input.id_token === "string"
+    )
   );
 }
 
@@ -569,29 +570,82 @@ const DEDUPE_IGNORED_KEYS = new Set<keyof NormalizedAccount>([
   "inputFormat",
 ]);
 
-function accountDedupeKey(account: NormalizedAccount): string {
-  const entries = (Object.keys(account) as (keyof NormalizedAccount)[])
-    .filter((key) => !DEDUPE_IGNORED_KEYS.has(key) && account[key] !== undefined)
-    .sort()
-    .map((key) => [key, account[key]] as const);
-  return JSON.stringify(entries);
-}
+const DEDUPE_CREDENTIAL_KEYS = [
+  "accessToken",
+  "refreshToken",
+  "sessionToken",
+  "idToken",
+] as const satisfies readonly (keyof NormalizedAccount)[];
 
 /**
- * 按归一化账号对象去重，忽略来源元数据（sourceName/sourcePath/warnings/inputFormat）。
+ * 凭据字段逐项兼容时去重：两边都有值就必须相等，缺失不算冲突。
  */
 export function dedupeAccounts(accounts: NormalizedAccount[]): NormalizedAccount[] {
-  const seen = new Set<string>();
   const result: NormalizedAccount[] = [];
   for (const account of accounts) {
-    const key = accountDedupeKey(account);
-    if (seen.has(key)) {
+    const existingAccounts = result.filter((existing) => hasCompatibleCredentials(existing, account));
+    const existing = existingAccounts[0];
+    if (existing) {
+      for (const duplicate of existingAccounts.slice(1)) {
+        mergeMissingAccountFields(existing, duplicate);
+        const index = result.indexOf(duplicate);
+        if (index >= 0) {
+          result.splice(index, 1);
+        }
+      }
+      mergeMissingAccountFields(existing, account);
       continue;
     }
-    seen.add(key);
     result.push(account);
   }
   return result;
+}
+
+function hasCompatibleCredentials(left: NormalizedAccount, right: NormalizedAccount): boolean {
+  let hasSharedCredential = false;
+  for (const key of DEDUPE_CREDENTIAL_KEYS) {
+    const leftValue = dedupeCredentialValue(left, key);
+    const rightValue = dedupeCredentialValue(right, key);
+    if (!leftValue || !rightValue) {
+      continue;
+    }
+    if (leftValue !== rightValue) {
+      return false;
+    }
+    hasSharedCredential = true;
+  }
+  return hasSharedCredential;
+}
+
+function dedupeCredentialValue(account: NormalizedAccount, key: (typeof DEDUPE_CREDENTIAL_KEYS)[number]): string | undefined {
+  if (key === "idToken" && account.idTokenSynthetic) {
+    return undefined;
+  }
+  const value = account[key];
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function mergeMissingAccountFields(target: NormalizedAccount, source: NormalizedAccount): void {
+  for (const key of Object.keys(source) as (keyof NormalizedAccount)[]) {
+    if (DEDUPE_IGNORED_KEYS.has(key)) {
+      continue;
+    }
+    const sourceValue = source[key];
+    if (isMissingValue(target[key]) && !isMissingValue(sourceValue)) {
+      (target as Record<keyof NormalizedAccount, unknown>)[key] = sourceValue;
+    }
+  }
+  if (target.idTokenSynthetic && source.idToken && !source.idTokenSynthetic) {
+    target.idToken = source.idToken;
+    target.idTokenSynthetic = false;
+  } else if (source.idTokenSynthetic && (!target.idToken || target.idToken === source.idToken)) {
+    target.idTokenSynthetic = true;
+  }
+  target.warnings = [...new Set([...target.warnings, ...source.warnings])];
+}
+
+function isMissingValue(value: unknown): boolean {
+  return value === undefined || value === "";
 }
 
 function normalizeTimeValue(value: unknown): string | undefined {

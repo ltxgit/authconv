@@ -7,6 +7,12 @@ export type ActiveAccountSource = {
   accounts: NormalizedAccount[];
 };
 
+export type ImportSummary = {
+  processed: number;
+  added: number;
+  merged: number;
+};
+
 export type PreviewTabElement = {
   tabIndex: number;
   getAttribute(name: string): string | null;
@@ -53,4 +59,13 @@ export function syncPreviewTabSelection(tabs: Iterable<PreviewTabElement>, activ
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
   }
+}
+
+export function importSummary(processed: number, beforeCount: number, afterCount: number): ImportSummary {
+  const added = Math.max(afterCount - beforeCount, 0);
+  return {
+    processed,
+    added,
+    merged: Math.max(processed - added, 0),
+  };
 }

@@ -95,6 +95,7 @@ type CliMessages = {
     missingFlagValue: (flag: string) => string;
     noInputFiles: (inputPath: string) => string;
     notFileOrDirectory: (inputPath: string) => string;
+    unsupportedInputFile: (inputPath: string) => string;
     stdoutSingleFile: string;
     zipStdoutConflict: string;
     inspectTargetConflict: string;
@@ -185,8 +186,8 @@ type WebMessages = {
   jsonParseFailed: (error: string) => string;
   noAccounts: string;
   sourceName: (index: number) => string;
-  sourceImported: (count: number) => string;
-  fileImported: (count: number) => string;
+  sourceImported: (processed: number, added: number, merged: number) => string;
+  fileImported: (processed: number, added: number, merged: number) => string;
   chooseJsonFile: string;
   fileNoAccounts: (name: string) => string;
   fileInvalidInput: (name: string, error: string) => string;
@@ -195,6 +196,7 @@ type WebMessages = {
   accountCount: (count: number) => string;
   formatCount: (count: number) => string;
   exportAccounts: (count: number) => string;
+  exportPreparing: string;
   exportAria: (count: number, jsonl: boolean, zip: boolean) => string;
   previewNoFormat: string;
   previewNoInput: string;
@@ -246,8 +248,8 @@ export const MESSAGES: Record<Locale, Messages> = {
   authconv --serve
 
 参数:
-  <path...>              输入 JSON 文件或目录路径，可传多个
-  -i, --input <path>     指定输入文件或目录（可重复）
+  <path...>              输入 JSON/JSONL/ZIP 文件或目录路径，可传多个
+  -i, --input <path>     指定 JSON/JSONL/ZIP 文件或目录（可重复）
   --stdin                从标准输入读取（与 -i 互斥）
   -f, --format <list>    输出格式，支持逗号分隔或重复传入；可用 cpa/sub2api/codex2api/codexmanager/codex/all
   --mode <fmt>=<m>       sub2api/codex2api 输出方式：merged 或 single
@@ -280,6 +282,7 @@ export const MESSAGES: Record<Locale, Messages> = {
         missingFlagValue: (flag) => `${flag} 缺少参数值`,
         noInputFiles: (inputPath) => `${inputPath}: 未找到输入文件`,
         notFileOrDirectory: (inputPath) => `${inputPath}: 不是文件或目录`,
+        unsupportedInputFile: (inputPath) => `${inputPath}: 不支持的输入文件类型（仅支持 .json、.jsonl、.zip）`,
         stdoutSingleFile: "--stdout 只支持单格式输出，且该格式只能生成一个文件",
         zipStdoutConflict: "--zip 与 --stdout 互斥",
         inspectTargetConflict: "--inspect 与 -o/--out-dir/--stdout/--zip 互斥",
@@ -323,7 +326,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       pageTitle: "GPT Auth 转换 | 纯本地安全凭据多格式处理工具",
       appTitle: "GPT Auth 转换",
       notice: "纯本地安全转换，所有运算在当前浏览器中完成。",
-      dragTitle: "释放以导入 JSON / JSONL 凭据",
+      dragTitle: "释放以导入 JSON / JSONL / ZIP 凭据",
       dragSub: "松开添加到列表",
       themeLabel: "主题",
       themeAria: "切换和选择主题",
@@ -353,8 +356,8 @@ export const MESSAGES: Record<Locale, Messages> = {
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "输入格式",
-      dropZoneAria: "选择或拖放 JSON 凭据文件或文件夹",
-      dropTitle: "选择或拖放 .json / .jsonl 凭据文件",
+      dropZoneAria: "选择或拖放 JSON、JSONL、ZIP 凭据文件或文件夹",
+      dropTitle: "选择或拖放 .json / .jsonl / .zip 凭据文件",
       dropSub: "拖入文件或文件夹",
       chooseFile: "选择文件",
       chooseFolder: "选择文件夹",
@@ -382,9 +385,9 @@ export const MESSAGES: Record<Locale, Messages> = {
       jsonParseFailed: (error) => `JSON 解析失败：${error}`,
       noAccounts: "未识别到可转换账号。",
       sourceName: (index) => `输入 ${index}`,
-      sourceImported: (count) => `成功加入 ${count} 个账号`,
-      fileImported: (count) => `成功导入 ${count} 个账号`,
-      chooseJsonFile: "请选择 .json 或 .jsonl 文件。",
+      sourceImported: (processed, added, merged) => `已处理 ${processed} 个账号，新增 ${added} 个，合并 ${merged} 个`,
+      fileImported: (processed, added, merged) => `已处理 ${processed} 个账号，新增 ${added} 个，合并 ${merged} 个`,
+      chooseJsonFile: "请选择 .json、.jsonl 或 .zip 文件。",
       fileNoAccounts: (name) => `${name}: 未识别到可转换账号。`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON 解析失败（${name}）：${error}`,
@@ -392,6 +395,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       accountCount: (count) => `${count} 个账号`,
       formatCount: (count) => `${count} 种格式`,
       exportAccounts: (count) => `导出 ${count} 个账号`,
+      exportPreparing: "正在打包...",
       exportAria: (count, jsonl, zip) => [
         `导出 ${count} 个账号`,
         jsonl ? "JSONL：每行一个账号。" : "",
@@ -440,8 +444,8 @@ Usage:
   authconv --serve
 
 Options:
-  <path...>              Input JSON file or directory path; may repeat
-  -i, --input <path>     Input file or directory path; may repeat
+  <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
+  -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
   --stdin                Read from standard input; conflicts with paths
   -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/all
   --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
@@ -474,6 +478,7 @@ Options:
         missingFlagValue: (flag) => `${flag} requires a value`,
         noInputFiles: (inputPath) => `${inputPath}: no input files found`,
         notFileOrDirectory: (inputPath) => `${inputPath}: not a file or directory`,
+        unsupportedInputFile: (inputPath) => `${inputPath}: unsupported input file type (expected .json, .jsonl, or .zip)`,
         stdoutSingleFile: "--stdout only supports one format that produces one file",
         zipStdoutConflict: "--zip conflicts with --stdout",
         inspectTargetConflict: "--inspect conflicts with -o/--out-dir/--stdout/--zip",
@@ -517,7 +522,7 @@ Options:
       pageTitle: "GPT Auth Converter | Local credential format converter",
       appTitle: "GPT Auth Converter",
       notice: "Local-only conversion. Everything runs in this browser.",
-      dragTitle: "Drop to import JSON / JSONL credentials",
+      dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
       dragSub: "Release to add to the list",
       themeLabel: "Theme",
       themeAria: "Switch and choose theme",
@@ -547,8 +552,8 @@ Example:
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "Input format",
-      dropZoneAria: "Choose or drop JSON credential files or folders",
-      dropTitle: "Choose or drop .json / .jsonl credential files",
+      dropZoneAria: "Choose or drop JSON, JSONL, or ZIP credential files or folders",
+      dropTitle: "Choose or drop .json / .jsonl / .zip credential files",
       dropSub: "Drop files or folders",
       chooseFile: "Choose File",
       chooseFolder: "Choose Folder",
@@ -576,9 +581,9 @@ Example:
       jsonParseFailed: (error) => `JSON parse failed: ${error}`,
       noAccounts: "No convertible accounts found.",
       sourceName: (index) => `Input ${index}`,
-      sourceImported: (count) => `Added ${count} account(s)`,
-      fileImported: (count) => `Imported ${count} account(s)`,
-      chooseJsonFile: "Choose .json or .jsonl files.",
+      sourceImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+      fileImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+      chooseJsonFile: "Choose .json, .jsonl, or .zip files.",
       fileNoAccounts: (name) => `${name}: no convertible accounts found.`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON parse failed (${name}): ${error}`,
@@ -586,6 +591,7 @@ Example:
       accountCount: (count) => `${count} account(s)`,
       formatCount: (count) => `${count} formats`,
       exportAccounts: (count) => `Export ${count} account(s)`,
+      exportPreparing: "Packaging...",
       exportAria: (count, jsonl, zip) => [
         `Export ${count} account(s)`,
         jsonl ? "JSONL: one account per line." : "",

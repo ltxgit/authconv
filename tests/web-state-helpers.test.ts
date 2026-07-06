@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NormalizedAccount } from "../src/types.js";
-import { activeAccountSource, selectedIndexAfterRemoval, syncPreviewTabSelection } from "../src/web/state-helpers.js";
+import { activeAccountSource, importSummary, selectedIndexAfterRemoval, syncPreviewTabSelection } from "../src/web/state-helpers.js";
 
 function account(email: string): NormalizedAccount {
   return {
@@ -40,6 +40,11 @@ describe("web state helpers", () => {
     expect(tabs[1]?.active).toBe(true);
     expect(tabs[1]?.ariaSelected).toBe("true");
     expect(tabs[1]?.tabIndex).toBe(0);
+  });
+
+  it("summarizes processed, added, and merged import counts", () => {
+    expect(importSummary(3, 2, 4)).toEqual({ processed: 3, added: 2, merged: 1 });
+    expect(importSummary(1, 2, 1)).toEqual({ processed: 1, added: 0, merged: 1 });
   });
 });
 

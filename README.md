@@ -24,7 +24,7 @@ ChatGPT / Codex OAuth 凭证格式转换工具。
 功能：
 
 - 纯浏览器端运行，零上传
-- 拖拽 JSON / JSONL 文件或文件夹，或粘贴内容；支持的浏览器也可直接选择文件夹
+- 拖拽 JSON / JSONL / ZIP 文件或文件夹，或粘贴 JSON / JSONL 文本；支持的浏览器也可直接选择文件夹
 - 支持多格式导出，sub2api / codex2api 可选聚合或单账号模式
 - JSONL 单行输出
 - 账号列表预览、输出预览、复制、JSON / ZIP 下载
@@ -68,7 +68,7 @@ node dist/cli.mjs creds.json -f all -o out/
 npm unlink -g authconv
 ```
 
-输入路径支持文件和目录，可一次传多个。Shell 展开的 `*.json` 这类通配符会作为多路径输入传给 `authconv`，所以可以直接批量转换。输入内容支持单个 JSON、JSONL，以及连续拼接的多个完整 JSON 文档。
+输入路径支持 JSON / JSONL / ZIP 文件和目录，可一次传多个。Shell 展开的 `*.json` 这类通配符会作为多路径输入传给 `authconv`，所以可以直接批量转换。stdin 只支持 JSON / JSONL / 连续拼接的多个完整 JSON 文档；ZIP 只作为文件输入。
 完全无参数时显示帮助；从 stdin 读取时必须显式传 `--stdin`。
 
 ### 使用
@@ -110,6 +110,9 @@ authconv *workspace-id*.json -f cpa
 
 # 文件、目录、通配符可以混用
 authconv current.json archive/ exports/*.json -f all
+
+# 直接导入 ZIP，适合回导本工具导出的多格式压缩包
+authconv authconv_3-accounts.zip -f cpa
 
 # 输出一个 zip
 authconv accounts/ -f all --zip -o out/

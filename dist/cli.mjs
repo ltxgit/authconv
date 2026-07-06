@@ -388,8 +388,8 @@ var MESSAGES = {
   authconv --serve
 
 \u53C2\u6570:
-  <path...>              \u8F93\u5165 JSON \u6587\u4EF6\u6216\u76EE\u5F55\u8DEF\u5F84\uFF0C\u53EF\u4F20\u591A\u4E2A
-  -i, --input <path>     \u6307\u5B9A\u8F93\u5165\u6587\u4EF6\u6216\u76EE\u5F55\uFF08\u53EF\u91CD\u590D\uFF09
+  <path...>              \u8F93\u5165 JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\u8DEF\u5F84\uFF0C\u53EF\u4F20\u591A\u4E2A
+  -i, --input <path>     \u6307\u5B9A JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\uFF08\u53EF\u91CD\u590D\uFF09
   --stdin                \u4ECE\u6807\u51C6\u8F93\u5165\u8BFB\u53D6\uFF08\u4E0E -i \u4E92\u65A5\uFF09
   -f, --format <list>    \u8F93\u51FA\u683C\u5F0F\uFF0C\u652F\u6301\u9017\u53F7\u5206\u9694\u6216\u91CD\u590D\u4F20\u5165\uFF1B\u53EF\u7528 cpa/sub2api/codex2api/codexmanager/codex/all
   --mode <fmt>=<m>       sub2api/codex2api \u8F93\u51FA\u65B9\u5F0F\uFF1Amerged \u6216 single
@@ -422,6 +422,7 @@ var MESSAGES = {
         missingFlagValue: (flag) => `${flag} \u7F3A\u5C11\u53C2\u6570\u503C`,
         noInputFiles: (inputPath) => `${inputPath}: \u672A\u627E\u5230\u8F93\u5165\u6587\u4EF6`,
         notFileOrDirectory: (inputPath) => `${inputPath}: \u4E0D\u662F\u6587\u4EF6\u6216\u76EE\u5F55`,
+        unsupportedInputFile: (inputPath) => `${inputPath}: \u4E0D\u652F\u6301\u7684\u8F93\u5165\u6587\u4EF6\u7C7B\u578B\uFF08\u4EC5\u652F\u6301 .json\u3001.jsonl\u3001.zip\uFF09`,
         stdoutSingleFile: "--stdout \u53EA\u652F\u6301\u5355\u683C\u5F0F\u8F93\u51FA\uFF0C\u4E14\u8BE5\u683C\u5F0F\u53EA\u80FD\u751F\u6210\u4E00\u4E2A\u6587\u4EF6",
         zipStdoutConflict: "--zip \u4E0E --stdout \u4E92\u65A5",
         inspectTargetConflict: "--inspect \u4E0E -o/--out-dir/--stdout/--zip \u4E92\u65A5",
@@ -467,7 +468,7 @@ var MESSAGES = {
       pageTitle: "GPT Auth \u8F6C\u6362 | \u7EAF\u672C\u5730\u5B89\u5168\u51ED\u636E\u591A\u683C\u5F0F\u5904\u7406\u5DE5\u5177",
       appTitle: "GPT Auth \u8F6C\u6362",
       notice: "\u7EAF\u672C\u5730\u5B89\u5168\u8F6C\u6362\uFF0C\u6240\u6709\u8FD0\u7B97\u5728\u5F53\u524D\u6D4F\u89C8\u5668\u4E2D\u5B8C\u6210\u3002",
-      dragTitle: "\u91CA\u653E\u4EE5\u5BFC\u5165 JSON / JSONL \u51ED\u636E",
+      dragTitle: "\u91CA\u653E\u4EE5\u5BFC\u5165 JSON / JSONL / ZIP \u51ED\u636E",
       dragSub: "\u677E\u5F00\u6DFB\u52A0\u5230\u5217\u8868",
       themeLabel: "\u4E3B\u9898",
       themeAria: "\u5207\u6362\u548C\u9009\u62E9\u4E3B\u9898",
@@ -497,8 +498,8 @@ var MESSAGES = {
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "\u8F93\u5165\u683C\u5F0F",
-      dropZoneAria: "\u9009\u62E9\u6216\u62D6\u653E JSON \u51ED\u636E\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
-      dropTitle: "\u9009\u62E9\u6216\u62D6\u653E .json / .jsonl \u51ED\u636E\u6587\u4EF6",
+      dropZoneAria: "\u9009\u62E9\u6216\u62D6\u653E JSON\u3001JSONL\u3001ZIP \u51ED\u636E\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
+      dropTitle: "\u9009\u62E9\u6216\u62D6\u653E .json / .jsonl / .zip \u51ED\u636E\u6587\u4EF6",
       dropSub: "\u62D6\u5165\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
       chooseFile: "\u9009\u62E9\u6587\u4EF6",
       chooseFolder: "\u9009\u62E9\u6587\u4EF6\u5939",
@@ -526,9 +527,9 @@ var MESSAGES = {
       jsonParseFailed: (error) => `JSON \u89E3\u6790\u5931\u8D25\uFF1A${error}`,
       noAccounts: "\u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002",
       sourceName: (index) => `\u8F93\u5165 ${index}`,
-      sourceImported: (count) => `\u6210\u529F\u52A0\u5165 ${count} \u4E2A\u8D26\u53F7`,
-      fileImported: (count) => `\u6210\u529F\u5BFC\u5165 ${count} \u4E2A\u8D26\u53F7`,
-      chooseJsonFile: "\u8BF7\u9009\u62E9 .json \u6216 .jsonl \u6587\u4EF6\u3002",
+      sourceImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
+      fileImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
+      chooseJsonFile: "\u8BF7\u9009\u62E9 .json\u3001.jsonl \u6216 .zip \u6587\u4EF6\u3002",
       fileNoAccounts: (name) => `${name}: \u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON \u89E3\u6790\u5931\u8D25\uFF08${name}\uFF09\uFF1A${error}`,
@@ -536,6 +537,7 @@ var MESSAGES = {
       accountCount: (count) => `${count} \u4E2A\u8D26\u53F7`,
       formatCount: (count) => `${count} \u79CD\u683C\u5F0F`,
       exportAccounts: (count) => `\u5BFC\u51FA ${count} \u4E2A\u8D26\u53F7`,
+      exportPreparing: "\u6B63\u5728\u6253\u5305...",
       exportAria: (count, jsonl, zip) => [
         `\u5BFC\u51FA ${count} \u4E2A\u8D26\u53F7`,
         jsonl ? "JSONL\uFF1A\u6BCF\u884C\u4E00\u4E2A\u8D26\u53F7\u3002" : "",
@@ -584,8 +586,8 @@ Usage:
   authconv --serve
 
 Options:
-  <path...>              Input JSON file or directory path; may repeat
-  -i, --input <path>     Input file or directory path; may repeat
+  <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
+  -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
   --stdin                Read from standard input; conflicts with paths
   -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/all
   --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
@@ -618,6 +620,7 @@ Options:
         missingFlagValue: (flag) => `${flag} requires a value`,
         noInputFiles: (inputPath) => `${inputPath}: no input files found`,
         notFileOrDirectory: (inputPath) => `${inputPath}: not a file or directory`,
+        unsupportedInputFile: (inputPath) => `${inputPath}: unsupported input file type (expected .json, .jsonl, or .zip)`,
         stdoutSingleFile: "--stdout only supports one format that produces one file",
         zipStdoutConflict: "--zip conflicts with --stdout",
         inspectTargetConflict: "--inspect conflicts with -o/--out-dir/--stdout/--zip",
@@ -663,7 +666,7 @@ Press Ctrl+C to stop.
       pageTitle: "GPT Auth Converter | Local credential format converter",
       appTitle: "GPT Auth Converter",
       notice: "Local-only conversion. Everything runs in this browser.",
-      dragTitle: "Drop to import JSON / JSONL credentials",
+      dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
       dragSub: "Release to add to the list",
       themeLabel: "Theme",
       themeAria: "Switch and choose theme",
@@ -693,8 +696,8 @@ Example:
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "Input format",
-      dropZoneAria: "Choose or drop JSON credential files or folders",
-      dropTitle: "Choose or drop .json / .jsonl credential files",
+      dropZoneAria: "Choose or drop JSON, JSONL, or ZIP credential files or folders",
+      dropTitle: "Choose or drop .json / .jsonl / .zip credential files",
       dropSub: "Drop files or folders",
       chooseFile: "Choose File",
       chooseFolder: "Choose Folder",
@@ -722,9 +725,9 @@ Example:
       jsonParseFailed: (error) => `JSON parse failed: ${error}`,
       noAccounts: "No convertible accounts found.",
       sourceName: (index) => `Input ${index}`,
-      sourceImported: (count) => `Added ${count} account(s)`,
-      fileImported: (count) => `Imported ${count} account(s)`,
-      chooseJsonFile: "Choose .json or .jsonl files.",
+      sourceImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+      fileImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+      chooseJsonFile: "Choose .json, .jsonl, or .zip files.",
       fileNoAccounts: (name) => `${name}: no convertible accounts found.`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON parse failed (${name}): ${error}`,
@@ -732,6 +735,7 @@ Example:
       accountCount: (count) => `${count} account(s)`,
       formatCount: (count) => `${count} formats`,
       exportAccounts: (count) => `Export ${count} account(s)`,
+      exportPreparing: "Packaging...",
       exportAria: (count, jsonl, zip) => [
         `Export ${count} account(s)`,
         jsonl ? "JSONL: one account per line." : "",
@@ -1054,7 +1058,7 @@ function detectArrayItemFormat(input) {
   if (format !== "unknown") {
     return format;
   }
-  if (isCodex2ApiLooseRecord(input)) {
+  if (isCodex2ApiAutoRecord(input)) {
     return "codex2api";
   }
   return "unknown";
@@ -1083,13 +1087,13 @@ function detectRecordInputFormat(input) {
   if (isRecord(input.tokens) && isRecord(input.meta)) {
     return "codexmanager";
   }
-  if (isCodex2ApiLooseRecord(input)) {
+  if (isCodex2ApiAutoRecord(input)) {
     return "codex2api";
   }
   return "unknown";
 }
-function isCodex2ApiLooseRecord(input) {
-  return typeof input.refresh_token === "string" && typeof input.session_token === "string" && !isRecord(input.credentials) && !isRecord(input.tokens) && !Array.isArray(input.accounts) && input.type !== "codex";
+function isCodex2ApiAutoRecord(input) {
+  return isCodex2ApiRecord(input) && input.type === void 0 && (typeof input.refresh_token === "string" || typeof input.session_token === "string" || typeof input.id_token === "string");
 }
 function normalizeInput(input, source, options = {}) {
   const locale = options.locale ?? DEFAULT_LOCALE;
@@ -1443,22 +1447,74 @@ var DEDUPE_IGNORED_KEYS = /* @__PURE__ */ new Set([
   "warnings",
   "inputFormat"
 ]);
-function accountDedupeKey(account) {
-  const entries = Object.keys(account).filter((key) => !DEDUPE_IGNORED_KEYS.has(key) && account[key] !== void 0).sort().map((key) => [key, account[key]]);
-  return JSON.stringify(entries);
-}
+var DEDUPE_CREDENTIAL_KEYS = [
+  "accessToken",
+  "refreshToken",
+  "sessionToken",
+  "idToken"
+];
 function dedupeAccounts(accounts) {
-  const seen = /* @__PURE__ */ new Set();
   const result = [];
   for (const account of accounts) {
-    const key = accountDedupeKey(account);
-    if (seen.has(key)) {
+    const existingAccounts = result.filter((existing2) => hasCompatibleCredentials(existing2, account));
+    const existing = existingAccounts[0];
+    if (existing) {
+      for (const duplicate of existingAccounts.slice(1)) {
+        mergeMissingAccountFields(existing, duplicate);
+        const index = result.indexOf(duplicate);
+        if (index >= 0) {
+          result.splice(index, 1);
+        }
+      }
+      mergeMissingAccountFields(existing, account);
       continue;
     }
-    seen.add(key);
     result.push(account);
   }
   return result;
+}
+function hasCompatibleCredentials(left, right) {
+  let hasSharedCredential = false;
+  for (const key of DEDUPE_CREDENTIAL_KEYS) {
+    const leftValue = dedupeCredentialValue(left, key);
+    const rightValue = dedupeCredentialValue(right, key);
+    if (!leftValue || !rightValue) {
+      continue;
+    }
+    if (leftValue !== rightValue) {
+      return false;
+    }
+    hasSharedCredential = true;
+  }
+  return hasSharedCredential;
+}
+function dedupeCredentialValue(account, key) {
+  if (key === "idToken" && account.idTokenSynthetic) {
+    return void 0;
+  }
+  const value = account[key];
+  return typeof value === "string" && value !== "" ? value : void 0;
+}
+function mergeMissingAccountFields(target, source) {
+  for (const key of Object.keys(source)) {
+    if (DEDUPE_IGNORED_KEYS.has(key)) {
+      continue;
+    }
+    const sourceValue = source[key];
+    if (isMissingValue(target[key]) && !isMissingValue(sourceValue)) {
+      target[key] = sourceValue;
+    }
+  }
+  if (target.idTokenSynthetic && source.idToken && !source.idTokenSynthetic) {
+    target.idToken = source.idToken;
+    target.idTokenSynthetic = false;
+  } else if (source.idTokenSynthetic && (!target.idToken || target.idToken === source.idToken)) {
+    target.idTokenSynthetic = true;
+  }
+  target.warnings = [.../* @__PURE__ */ new Set([...target.warnings, ...source.warnings])];
+}
+function isMissingValue(value) {
+  return value === void 0 || value === "";
 }
 function normalizeTimeValue(value) {
   if (value === void 0 || value === null || value === "") {
@@ -1773,7 +1829,25 @@ for (i = 0; i < 32; ++i)
   fdt[i] = 5;
 var i;
 var flm = /* @__PURE__ */ hMap(flt, 9, 0);
+var flrm = /* @__PURE__ */ hMap(flt, 9, 1);
 var fdm = /* @__PURE__ */ hMap(fdt, 5, 0);
+var fdrm = /* @__PURE__ */ hMap(fdt, 5, 1);
+var max = function(a) {
+  var m = a[0];
+  for (var i = 1; i < a.length; ++i) {
+    if (a[i] > m)
+      m = a[i];
+  }
+  return m;
+};
+var bits = function(d, p, m) {
+  var o = p / 8 | 0;
+  return (d[o] | d[o + 1] << 8) >> (p & 7) & m;
+};
+var bits16 = function(d, p) {
+  var o = p / 8 | 0;
+  return (d[o] | d[o + 1] << 8 | d[o + 2] << 16) >> (p & 7);
+};
 var shft = function(p) {
   return (p + 7) / 8 | 0;
 };
@@ -1809,6 +1883,147 @@ var err = function(ind, msg, nt) {
   if (!nt)
     throw e;
   return e;
+};
+var inflt = function(dat, st, buf, dict) {
+  var sl = dat.length, dl = dict ? dict.length : 0;
+  if (!sl || st.f && !st.l)
+    return buf || new u8(0);
+  var noBuf = !buf;
+  var resize = noBuf || st.i != 2;
+  var noSt = st.i;
+  if (noBuf)
+    buf = new u8(sl * 3);
+  var cbuf = function(l2) {
+    var bl = buf.length;
+    if (l2 > bl) {
+      var nbuf = new u8(Math.max(bl * 2, l2));
+      nbuf.set(buf);
+      buf = nbuf;
+    }
+  };
+  var final = st.f || 0, pos = st.p || 0, bt = st.b || 0, lm = st.l, dm = st.d, lbt = st.m, dbt = st.n;
+  var tbts = sl * 8;
+  do {
+    if (!lm) {
+      final = bits(dat, pos, 1);
+      var type = bits(dat, pos + 1, 3);
+      pos += 3;
+      if (!type) {
+        var s = shft(pos) + 4, l = dat[s - 4] | dat[s - 3] << 8, t = s + l;
+        if (t > sl) {
+          if (noSt)
+            err(0);
+          break;
+        }
+        if (resize)
+          cbuf(bt + l);
+        buf.set(dat.subarray(s, t), bt);
+        st.b = bt += l, st.p = pos = t * 8, st.f = final;
+        continue;
+      } else if (type == 1)
+        lm = flrm, dm = fdrm, lbt = 9, dbt = 5;
+      else if (type == 2) {
+        var hLit = bits(dat, pos, 31) + 257, hcLen = bits(dat, pos + 10, 15) + 4;
+        var tl = hLit + bits(dat, pos + 5, 31) + 1;
+        pos += 14;
+        var ldt = new u8(tl);
+        var clt = new u8(19);
+        for (var i = 0; i < hcLen; ++i) {
+          clt[clim[i]] = bits(dat, pos + i * 3, 7);
+        }
+        pos += hcLen * 3;
+        var clb = max(clt), clbmsk = (1 << clb) - 1;
+        var clm = hMap(clt, clb, 1);
+        for (var i = 0; i < tl; ) {
+          var r = clm[bits(dat, pos, clbmsk)];
+          pos += r & 15;
+          var s = r >> 4;
+          if (s < 16) {
+            ldt[i++] = s;
+          } else {
+            var c = 0, n = 0;
+            if (s == 16)
+              n = 3 + bits(dat, pos, 3), pos += 2, c = ldt[i - 1];
+            else if (s == 17)
+              n = 3 + bits(dat, pos, 7), pos += 3;
+            else if (s == 18)
+              n = 11 + bits(dat, pos, 127), pos += 7;
+            while (n--)
+              ldt[i++] = c;
+          }
+        }
+        var lt = ldt.subarray(0, hLit), dt = ldt.subarray(hLit);
+        lbt = max(lt);
+        dbt = max(dt);
+        lm = hMap(lt, lbt, 1);
+        dm = hMap(dt, dbt, 1);
+      } else
+        err(1);
+      if (pos > tbts) {
+        if (noSt)
+          err(0);
+        break;
+      }
+    }
+    if (resize)
+      cbuf(bt + 131072);
+    var lms = (1 << lbt) - 1, dms = (1 << dbt) - 1;
+    var lpos = pos;
+    for (; ; lpos = pos) {
+      var c = lm[bits16(dat, pos) & lms], sym = c >> 4;
+      pos += c & 15;
+      if (pos > tbts) {
+        if (noSt)
+          err(0);
+        break;
+      }
+      if (!c)
+        err(2);
+      if (sym < 256)
+        buf[bt++] = sym;
+      else if (sym == 256) {
+        lpos = pos, lm = null;
+        break;
+      } else {
+        var add = sym - 254;
+        if (sym > 264) {
+          var i = sym - 257, b = fleb[i];
+          add = bits(dat, pos, (1 << b) - 1) + fl[i];
+          pos += b;
+        }
+        var d = dm[bits16(dat, pos) & dms], dsym = d >> 4;
+        if (!d)
+          err(3);
+        pos += d & 15;
+        var dt = fd[dsym];
+        if (dsym > 3) {
+          var b = fdeb[dsym];
+          dt += bits16(dat, pos) & (1 << b) - 1, pos += b;
+        }
+        if (pos > tbts) {
+          if (noSt)
+            err(0);
+          break;
+        }
+        if (resize)
+          cbuf(bt + 131072);
+        var end = bt + add;
+        if (bt < dt) {
+          var shift = dl - dt, dend = Math.min(dt, end);
+          if (shift + bt < 0)
+            err(3);
+          for (; bt < dend; ++bt)
+            buf[bt] = dict[shift + bt];
+        }
+        for (; bt < end; ++bt)
+          buf[bt] = buf[bt - dt];
+      }
+    }
+    st.l = lm, st.p = lpos, st.b = bt, st.f = final;
+    if (lm)
+      final = 1, st.m = lbt, st.d = dm, st.n = dbt;
+  } while (!final);
+  return bt != buf.length && noBuf ? slc(buf, 0, bt) : buf.subarray(0, bt);
 };
 var wbits = function(d, p, v) {
   v <<= p & 7;
@@ -2157,12 +2372,24 @@ var mrg = function(a, b) {
     o[k] = b[k];
   return o;
 };
+var b2 = function(d, b) {
+  return d[b] | d[b + 1] << 8;
+};
+var b4 = function(d, b) {
+  return (d[b] | d[b + 1] << 8 | d[b + 2] << 16 | d[b + 3] << 24) >>> 0;
+};
+var b8 = function(d, b) {
+  return b4(d, b) + b4(d, b + 4) * 4294967296;
+};
 var wbytes = function(d, b, v) {
   for (; v; ++b)
     d[b] = v, v >>>= 8;
 };
 function deflateSync(data, opts) {
   return dopt(data, opts || {}, 0, 0);
+}
+function inflateSync(data, opts) {
+  return inflt(data, { i: 2 }, opts && opts.out, opts && opts.dictionary);
 }
 var fltn = function(d, p, t, o) {
   for (var k in d) {
@@ -2185,6 +2412,22 @@ try {
   tds = 1;
 } catch (e) {
 }
+var dutf8 = function(d) {
+  for (var r = "", i = 0; ; ) {
+    var c = d[i++];
+    var eb = (c > 127) + (c > 223) + (c > 239);
+    if (i + eb > d.length)
+      return { s: r, r: slc(d, i - 1) };
+    if (!eb)
+      r += String.fromCharCode(c);
+    else if (eb == 3) {
+      c = ((c & 15) << 18 | (d[i++] & 63) << 12 | (d[i++] & 63) << 6 | d[i++] & 63) - 65536, r += String.fromCharCode(55296 | c >> 10, 56320 | c & 1023);
+    } else if (eb & 1)
+      r += String.fromCharCode((c & 31) << 6 | d[i++] & 63);
+    else
+      r += String.fromCharCode((c & 15) << 12 | (d[i++] & 63) << 6 | d[i++] & 63);
+  }
+};
 function strToU8(str, latin1) {
   if (latin1) {
     var ar_1 = new u8(str.length);
@@ -2218,6 +2461,34 @@ function strToU8(str, latin1) {
   }
   return slc(ar, 0, ai);
 }
+function strFromU8(dat, latin1) {
+  if (latin1) {
+    var r = "";
+    for (var i = 0; i < dat.length; i += 16384)
+      r += String.fromCharCode.apply(null, dat.subarray(i, i + 16384));
+    return r;
+  } else if (td) {
+    return td.decode(dat);
+  } else {
+    var _a2 = dutf8(dat), s = _a2.s, r = _a2.r;
+    if (r.length)
+      err(8);
+    return s;
+  }
+}
+var slzh = function(d, b) {
+  return b + 30 + b2(d, b + 26) + b2(d, b + 28);
+};
+var zh = function(d, b, z) {
+  var fnl = b2(d, b + 28), fn = strFromU8(d.subarray(b + 46, b + 46 + fnl), !(b2(d, b + 8) & 2048)), es = b + 46 + fnl, bs = b4(d, b + 20);
+  var _a2 = z && bs == 4294967295 ? z64e(d, es) : [bs, b4(d, b + 24), b4(d, b + 42)], sc = _a2[0], su = _a2[1], off = _a2[2];
+  return [b2(d, b + 10), sc, su, fn, es + b2(d, b + 30) + b2(d, b + 32), off];
+};
+var z64e = function(d, b) {
+  for (; b2(d, b) != 1; b += 4 + b2(d, b + 2))
+    ;
+  return [b8(d, b + 12), b8(d, b + 4), b8(d, b + 20)];
+};
 var exfl = function(ex) {
   var le = 0;
   if (ex) {
@@ -2319,12 +2590,89 @@ function zipSync(data, opts) {
   wzf(out, o, files.length, cdl, oe);
   return out;
 }
+function unzipSync(data, opts) {
+  var files = {};
+  var e = data.length - 22;
+  for (; b4(data, e) != 101010256; --e) {
+    if (!e || data.length - e > 65558)
+      err(13);
+  }
+  ;
+  var c = b2(data, e + 8);
+  if (!c)
+    return {};
+  var o = b4(data, e + 16);
+  var z = o == 4294967295 || c == 65535;
+  if (z) {
+    var ze = b4(data, e - 12);
+    z = b4(data, ze) == 101075792;
+    if (z) {
+      c = b4(data, ze + 32);
+      o = b4(data, ze + 48);
+    }
+  }
+  var fltr = opts && opts.filter;
+  for (var i = 0; i < c; ++i) {
+    var _a2 = zh(data, o, z), c_2 = _a2[0], sc = _a2[1], su = _a2[2], fn = _a2[3], no = _a2[4], off = _a2[5], b = slzh(data, off);
+    o = no;
+    if (!fltr || fltr({
+      name: fn,
+      size: sc,
+      originalSize: su,
+      compression: c_2
+    })) {
+      if (!c_2)
+        files[fn] = slc(data, b, b + sc);
+      else if (c_2 == 8)
+        files[fn] = inflateSync(data.subarray(b, b + sc), { out: new u8(su) });
+      else
+        err(14, "unknown compression type " + c_2);
+    }
+  }
+  return files;
+}
 
 // src/zip.ts
 var ZIP_MTIME = new Date(1980, 0, 1);
 function zipOutputFiles(files) {
   const entries = Object.fromEntries(files.map((file) => [file.path, strToU8(file.text)]));
   return zipSync(entries, { level: 6, mtime: ZIP_MTIME });
+}
+
+// src/import-sources.ts
+function isJsonCredentialPath(value) {
+  const lowerName = value.toLowerCase();
+  return lowerName.endsWith(".json") || lowerName.endsWith(".jsonl");
+}
+function isZipCredentialPath(value) {
+  return value.toLowerCase().endsWith(".zip");
+}
+function isCredentialImportPath(value) {
+  return isJsonCredentialPath(value) || isZipCredentialPath(value);
+}
+function extractZipJsonSources(zipPath, bytes) {
+  const archive = unzipSync(bytes, {
+    filter: (file) => isJsonCredentialPath(file.name) && !isIgnoredArchivePath(file.name)
+  });
+  return Object.entries(archive).sort(([left], [right]) => left.localeCompare(right)).map(([entryPath, content]) => {
+    const path2 = joinImportPath(zipPath, normalizeArchiveEntryPath(entryPath));
+    return {
+      name: path2,
+      path: path2,
+      text: strFromU8(content)
+    };
+  });
+}
+function joinImportPath(basePath, entryPath) {
+  const base = basePath.replace(/\/+$/g, "");
+  const entry = normalizeArchiveEntryPath(entryPath);
+  return base ? `${base}/${entry}` : entry;
+}
+function normalizeArchiveEntryPath(entryPath) {
+  return entryPath.replace(/\\/g, "/").split("/").filter((segment) => segment && segment !== "." && segment !== "..").join("/");
+}
+function isIgnoredArchivePath(entryPath) {
+  return normalizeArchiveEntryPath(entryPath).split("/").some((segment) => segment === "__MACOSX" || segment.startsWith("."));
 }
 
 // src/download-names.ts
@@ -2793,25 +3141,37 @@ async function readInputPath(inputPath, locale) {
   const inputStat = await stat(inputPath);
   if (inputStat.isDirectory()) {
     const entries = await readdir(inputPath, { withFileTypes: true });
-    const files = entries.filter((entry) => entry.isFile() && isJsonInputFile(entry.name)).map((entry) => entry.name).sort((left, right) => left.localeCompare(right));
+    const files = entries.filter((entry) => entry.isFile() && isCredentialImportPath(entry.name)).map((entry) => entry.name).sort((left, right) => left.localeCompare(right));
     if (files.length === 0) {
       throw new CliError(3, messages.errors.noInputFiles(inputPath));
     }
     return Promise.all(
       files.map(async (fileName) => {
         const sourcePath = path.join(inputPath, fileName);
-        return parseInputText(await readFile(sourcePath, "utf8"), fileName, sourcePath, locale);
+        return parseInputFile(sourcePath, fileName, locale);
       })
-    );
+    ).then((groups) => groups.flat());
   }
   if (!inputStat.isFile()) {
     throw new CliError(3, messages.errors.notFileOrDirectory(inputPath));
   }
-  return [parseInputText(await readFile(inputPath, "utf8"), path.basename(inputPath), inputPath, locale)];
+  if (!isCredentialImportPath(inputPath)) {
+    throw new CliError(3, messages.errors.unsupportedInputFile(inputPath));
+  }
+  return parseInputFile(inputPath, path.basename(inputPath), locale);
 }
-function isJsonInputFile(fileName) {
-  const lowerName = fileName.toLowerCase();
-  return lowerName.endsWith(".json") || lowerName.endsWith(".jsonl");
+async function parseInputFile(sourcePath, sourceName, locale) {
+  if (isZipCredentialPath(sourcePath)) {
+    const sources = extractZipJsonSources(sourceName, await readFile(sourcePath));
+    return sources.map((source) => {
+      const entryPath = normalizeArchiveEntryPath(source.path.slice(sourceName.length + 1));
+      return parseInputText(source.text, source.name, `${sourcePath}/${entryPath}`, locale);
+    });
+  }
+  if (isJsonCredentialPath(sourcePath)) {
+    return [parseInputText(await readFile(sourcePath, "utf8"), sourceName, sourcePath, locale)];
+  }
+  return [];
 }
 function parseInputText(text, sourceName, sourcePath, locale) {
   let input;

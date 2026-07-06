@@ -18,6 +18,13 @@ import {
   normalizeLocale,
   zipOutputFiles,
 } from "./index.js";
+import {
+  extractZipJsonSources,
+  isCredentialImportPath,
+  isJsonCredentialPath,
+  isZipCredentialPath,
+  normalizeArchiveEntryPath,
+} from "./import-sources.js";
 import { zipDownloadName } from "./download-names.js";
 import { isOutputFormat } from "./formats.js";
 import type {
@@ -585,7 +592,7 @@ async function readInputPath(inputPath: string, locale: Locale): Promise<LoadedI
   if (inputStat.isDirectory()) {
     const entries = await readdir(inputPath, { withFileTypes: true });
     const files = entries
-      .filter((entry) => entry.isFile() && isJsonInputFile(entry.name))
+      .filter((entry) => entry.isFile() && isCredentialImportPath(entry.name))
       .map((entry) => entry.name)
       .sort((left, right) => left.localeCompare(right));
 
@@ -596,21 +603,34 @@ async function readInputPath(inputPath: string, locale: Locale): Promise<LoadedI
     return Promise.all(
       files.map(async (fileName) => {
         const sourcePath = path.join(inputPath, fileName);
-        return parseInputText(await readFile(sourcePath, "utf8"), fileName, sourcePath, locale);
+        return parseInputFile(sourcePath, fileName, locale);
       }),
-    );
+    ).then((groups) => groups.flat());
   }
 
   if (!inputStat.isFile()) {
     throw new CliError(3, messages.errors.notFileOrDirectory(inputPath));
   }
 
-  return [parseInputText(await readFile(inputPath, "utf8"), path.basename(inputPath), inputPath, locale)];
+  if (!isCredentialImportPath(inputPath)) {
+    throw new CliError(3, messages.errors.unsupportedInputFile(inputPath));
+  }
+
+  return parseInputFile(inputPath, path.basename(inputPath), locale);
 }
 
-function isJsonInputFile(fileName: string): boolean {
-  const lowerName = fileName.toLowerCase();
-  return lowerName.endsWith(".json") || lowerName.endsWith(".jsonl");
+async function parseInputFile(sourcePath: string, sourceName: string, locale: Locale): Promise<LoadedInput[]> {
+  if (isZipCredentialPath(sourcePath)) {
+    const sources = extractZipJsonSources(sourceName, await readFile(sourcePath));
+    return sources.map((source) => {
+      const entryPath = normalizeArchiveEntryPath(source.path.slice(sourceName.length + 1));
+      return parseInputText(source.text, source.name, `${sourcePath}/${entryPath}`, locale);
+    });
+  }
+  if (isJsonCredentialPath(sourcePath)) {
+    return [parseInputText(await readFile(sourcePath, "utf8"), sourceName, sourcePath, locale)];
+  }
+  return [];
 }
 
 function parseInputText(text: string, sourceName: string, sourcePath: string, locale: Locale): LoadedInput {

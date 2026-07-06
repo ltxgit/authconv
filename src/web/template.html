@@ -16,7 +16,7 @@
         <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
         </svg>
-        <div class="drag-title" id="dragTitle">Drop to import JSON / JSONL credentials</div>
+        <div class="drag-title" id="dragTitle">Drop to import JSON / JSONL / ZIP credentials</div>
         <div class="drag-sub" id="dragSub">Release to add to the list</div>
       </div>
     </div>
@@ -131,19 +131,19 @@ Example:
             </div>
           </div>
           <div id="inputError" class="input-error" role="alert" hidden></div>
-          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Choose or drop JSON credential files or folders">
+          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Choose or drop JSON, JSONL, or ZIP credential files or folders">
             <svg class="cloud-icon" viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
             </svg>
             <div class="drop-text">
-              <strong id="dropTitle">Choose or drop .json / .jsonl credential files</strong>
+              <strong id="dropTitle">Choose or drop .json / .jsonl / .zip credential files</strong>
               <span id="dropSub">Drop files or folders</span>
             </div>
             <div class="drop-actions">
               <button id="fileButton" type="button" class="btn btn-secondary btn-sm drop-file-button">Choose File</button>
               <button id="folderButton" type="button" class="btn btn-secondary btn-sm drop-folder-button">Choose Folder</button>
             </div>
-            <input id="fileInput" type="file" accept=".json,.jsonl,application/json,application/x-ndjson" multiple tabindex="-1" />
+            <input id="fileInput" type="file" accept=".json,.jsonl,.zip,application/json,application/x-ndjson,application/zip,application/x-zip-compressed" multiple tabindex="-1" />
           </div>
         </div>
 

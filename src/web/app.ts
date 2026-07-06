@@ -22,10 +22,18 @@ import {
   type SerializedOutputFile,
   zipOutputFiles,
 } from "../index.js";
+import {
+  extractZipJsonSources,
+  isCredentialImportPath,
+  isJsonCredentialPath,
+  isZipCredentialPath,
+  type JsonSource,
+} from "../import-sources.js";
 import { zipDownloadName } from "../download-names.js";
 import { effectiveWebOutputModes } from "./output-modes.js";
 import {
   activeAccountSource,
+  importSummary,
   selectedIndexAfterRemoval,
   syncPreviewTabSelection,
   type AccountSourceKind,
@@ -48,12 +56,6 @@ const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
 const SESSION_URL = "https://chatgpt.com/api/auth/session";
 
 type ThemeMode = "system" | "light" | "dark";
-
-type JsonSource = {
-  name: string;
-  path: string;
-  text: string;
-};
 
 type FileSystemFileHandleLike = {
   kind: "file";
@@ -127,6 +129,7 @@ type ViewState = {
   nextInputIndex: number;
   forcedInputFormat: InputFormat | "auto";
   allowSyntheticIdToken: boolean;
+  downloadBusy: boolean;
   locale: Locale;
 };
 
@@ -147,6 +150,7 @@ const state: ViewState = {
   nextInputIndex: 1,
   forcedInputFormat: "auto",
   allowSyntheticIdToken: true,
+  downloadBusy: false,
   locale: detectWebLocale(window.location.search),
 };
 
@@ -415,7 +419,7 @@ function bindEvents(): void {
   });
 
   els.downloadButton.addEventListener("click", () => {
-    downloadCurrentPlan();
+    void downloadCurrentPlan();
   });
 
   els.inputFormatSelect.addEventListener("change", () => {
@@ -837,8 +841,12 @@ function renderOutputHeader(activeSource: ReturnType<typeof activeAccountSource>
   const draft = draftAccounts();
   els.addDraftButton.disabled = draft.length === 0 || Boolean(state.draftParsed?.error);
   els.copyButton.disabled = !currentPreviewFile();
-  els.downloadButton.disabled = !canExport;
-  els.downloadBtnText.textContent = canExport ? text.exportAccounts(activeCount) : text.downloadDefault;
+  els.downloadButton.disabled = !canExport || state.downloadBusy;
+  els.downloadBtnText.textContent = state.downloadBusy
+    ? text.exportPreparing
+    : canExport
+      ? text.exportAccounts(activeCount)
+      : text.downloadDefault;
   els.downloadButton.removeAttribute("title");
   els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, activeCount, zip));
   renderTextModeControl();
@@ -1027,7 +1035,7 @@ function addDraftAccounts(): void {
   const beforeCount = state.accounts.length;
   state.accounts.push(...parsed.accounts);
   state.accounts = dedupeAccounts(state.accounts);
-  const addedCount = state.accounts.length - beforeCount;
+  const summary = importSummary(parsed.accounts.length, beforeCount, state.accounts.length);
   state.nextInputIndex += 1;
   state.selectedAccountIndex = beforeCount;
   els.jsonInput.value = "";
@@ -1036,7 +1044,7 @@ function addDraftAccounts(): void {
   state.draftParsed = undefined;
   state.sourceErrors = [];
   triggerLogoSparkle();
-  showToast(textMessages.sourceImported(addedCount));
+  showToast(textMessages.sourceImported(summary.processed, summary.added, summary.merged));
   recompute();
 }
 
@@ -1131,9 +1139,9 @@ async function readSources(sources: JsonSource[], itemCount: number): Promise<vo
     state.selectedAccountIndex = beforeCount;
     state.accounts.push(...nextAccounts);
     state.accounts = dedupeAccounts(state.accounts);
-    const addedCount = state.accounts.length - beforeCount;
+    const summary = importSummary(nextAccounts.length, beforeCount, state.accounts.length);
     triggerLogoSparkle();
-    showToast(text.fileImported(addedCount));
+    showToast(text.fileImported(summary.processed, summary.added, summary.merged));
   }
   state.sourceErrors = parsed
     .filter((item) => item.error || item.accounts.length === 0)
@@ -1150,18 +1158,15 @@ async function readSources(sources: JsonSource[], itemCount: number): Promise<vo
 }
 
 async function fileSourcesFromFiles(files: File[]): Promise<JsonSource[]> {
-  const jsonFiles = files
+  const importFiles = files
     .map((file) => ({ file, path: filePath(file) }))
-    .filter((item) => isJsonCredentialPath(item.path))
+    .filter((item) => isCredentialImportPath(item.path))
     .sort((left, right) => left.path.localeCompare(right.path));
 
-  return Promise.all(
-    jsonFiles.map(async ({ file, path }) => ({
-      name: path,
-      path,
-      text: await file.text(),
-    })),
+  const sourceGroups = await Promise.all(
+    importFiles.map(({ file, path }) => fileSourcesFromFile(file, path)),
   );
+  return sourceGroups.flat();
 }
 
 async function fileSourcesFromDataTransfer(dataTransfer: DataTransfer | null): Promise<{ sources: JsonSource[]; itemCount: number } | undefined> {
@@ -1206,15 +1211,11 @@ function droppedFileSystemHandle(item: DataTransferItem): Promise<FileSystemHand
 async function fileSourcesFromFileSystemHandle(handle: FileSystemHandleLike, basePath = handle.name): Promise<JsonSource[]> {
   if (handle.kind === "file") {
     const path = normalizeDroppedPath(basePath || handle.name);
-    if (!isJsonCredentialPath(path)) {
+    if (!isCredentialImportPath(path)) {
       return [];
     }
     const file = await handle.getFile();
-    return [{
-      name: path,
-      path,
-      text: await file.text(),
-    }];
+    return fileSourcesFromFile(file, path);
   }
 
   const sourceGroups: JsonSource[][] = [];
@@ -1247,19 +1248,15 @@ async function fileSourcesFromEntry(entry: FileSystemEntryLike): Promise<JsonSou
   if (entry.isFile) {
     const fileEntry = entry as FileSystemFileEntryLike;
     const entryPath = normalizeDroppedPath(entry.fullPath || entry.name);
-    if (!isJsonCredentialPath(entryPath)) {
+    if (!isCredentialImportPath(entryPath)) {
       return [];
     }
     const file = await fileFromEntry(fileEntry);
     const path = entryPath || filePath(file);
-    if (!isJsonCredentialPath(path)) {
+    if (!isCredentialImportPath(path)) {
       return [];
     }
-    return [{
-      name: path,
-      path,
-      text: await file.text(),
-    }];
+    return fileSourcesFromFile(file, path);
   }
 
   if (!entry.isDirectory) {
@@ -1324,9 +1321,18 @@ function normalizeDroppedPath(value: string): string {
   return value.replace(/^\/+/, "") || "input.json";
 }
 
-function isJsonCredentialPath(value: string): boolean {
-  const lowerName = value.toLowerCase();
-  return lowerName.endsWith(".json") || lowerName.endsWith(".jsonl");
+async function fileSourcesFromFile(file: File, path: string): Promise<JsonSource[]> {
+  if (isZipCredentialPath(path)) {
+    return extractZipJsonSources(path, new Uint8Array(await file.arrayBuffer()));
+  }
+  if (isJsonCredentialPath(path)) {
+    return [{
+      name: path,
+      path,
+      text: await file.text(),
+    }];
+  }
+  return [];
 }
 
 function canChooseDirectory(): boolean {
@@ -1362,25 +1368,39 @@ async function copyPreview(): Promise<void> {
   }
 }
 
-function downloadCurrentPlan(): void {
+async function downloadCurrentPlan(): Promise<void> {
   const text = webMessages();
-  if (!canExportCurrentPlan(currentAccountSource())) {
+  if (state.downloadBusy || !canExportCurrentPlan(currentAccountSource())) {
     return;
   }
 
   const zip = shouldZip(state.serializedFiles, state.selectedFormats.length);
   if (zip) {
-    const bytes = zipOutputFiles(state.serializedFiles);
-    const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    const name = zipDownloadName(currentAccountSource().accounts);
-    downloadBlob(new Blob([payload], { type: "application/zip" }), name);
-    showToast(text.exportZipToast(name));
+    state.downloadBusy = true;
+    renderOutputHeader(currentAccountSource());
+    try {
+      await nextAnimationFrame();
+      const bytes = zipOutputFiles(state.serializedFiles);
+      const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const name = zipDownloadName(currentAccountSource().accounts);
+      downloadBlob(new Blob([payload], { type: "application/zip" }), name);
+      showToast(text.exportZipToast(name));
+    } finally {
+      state.downloadBusy = false;
+      renderOutputHeader(currentAccountSource());
+    }
     return;
   }
 
   const file = state.serializedFiles[0];
   downloadBlob(new Blob([file.text], { type: outputMimeType() }), file.path.split("/").pop() ?? outputFallbackName());
   showToast(text.exportFileToast);
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 function downloadBlob(blob: Blob, name: string): void {

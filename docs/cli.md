@@ -2,7 +2,7 @@
 
 ChatGPT / Codex OAuth 凭证格式转换工具的命令行参考。
 
-`authconv` 把一份或多份凭证输入（ChatGPT `/api/auth/session` 响应、Codex `auth.json`、sub2api 导出、或散装 token JSON）归一化后，渲染成目标工具所需的格式（CPA / sub2api / codex2api / Codex-Manager / Codex auth.json），并写入文件或输出到 stdout。所有运算在本地完成，不发起任何网络请求。
+`authconv` 把一份或多份凭证输入（ChatGPT `/api/auth/session` 响应、Codex `auth.json`、sub2api 导出、ZIP 归档、或散装 token JSON）归一化后，渲染成目标工具所需的格式（CPA / sub2api / codex2api / Codex-Manager / Codex auth.json），并写入文件或输出到 stdout。所有运算在本地完成，不发起任何网络请求。
 
 ---
 
@@ -30,7 +30,7 @@ npm link
 
 `npm link` 会把全局命令 `authconv` 指向本项目的 `dist/cli.mjs`。不想全局链接时，在项目目录内直接运行 `node dist/cli.mjs ...` 即可。更新源码后重新执行 `npm run build`；取消全局命令用 `npm unlink -g authconv`。
 
-命令是**纯扁平**结构：没有子命令，一切通过参数控制。`<input...>` 可以是一个或多个文件/目录；从 stdin 读取时必须显式传 `--stdin`；完全无参数时显示帮助。输入内容支持单个 JSON、JSONL，以及连续拼接的多个完整 JSON 文档。`--serve` 是独立的本地 Web UI 模式，不读取输入、不写输出文件。
+命令是**纯扁平**结构：没有子命令，一切通过参数控制。`<input...>` 可以是一个或多个 JSON / JSONL / ZIP 文件或目录；从 stdin 读取时必须显式传 `--stdin`；完全无参数时显示帮助。stdin 只支持单个 JSON、JSONL，以及连续拼接的多个完整 JSON 文档；ZIP 只作为文件路径输入。`--serve` 是独立的本地 Web UI 模式，不读取输入、不写输出文件。
 
 ---
 
@@ -40,10 +40,10 @@ npm link
 authconv [<input...>] [options]
 ```
 
-- 指定文件：解析文件内容，支持单个 JSON / JSONL / 多 JSON 文档流。
-- 指定目录：非递归解析目录一级的 `.json` / `.jsonl` 文件（按文件名排序），账号合并处理。
+- 指定文件：解析文件内容，支持单个 JSON / JSONL / ZIP / 多 JSON 文档流。
+- 指定目录：非递归解析目录一级的 `.json` / `.jsonl` / `.zip` 文件（按文件名排序），账号合并处理。
 - 指定多个路径：按命令行顺序读取每个文件或目录，目录内部仍按文件名排序。
-- 显式传 `--stdin`：从 stdin 读取同样的 JSON / JSONL / 多 JSON 文档流。
+- 显式传 `--stdin`：从 stdin 读取 JSON / JSONL / 多 JSON 文档流，不支持二进制 ZIP。
 - 完全无参数：显示帮助，不读取 stdin。
 - 未指定路径且未传 `--stdin`：报错，不隐式等待 stdin。
 
@@ -55,7 +55,7 @@ authconv [<input...>] [options]
 
 | 参数 | 说明 |
 |---|---|
-| `<path...>` | 输入 JSON 文件或目录（位置参数），可传多个。 |
+| `<path...>` | 输入 JSON / JSONL / ZIP 文件或目录（位置参数），可传多个。 |
 | `-i, --input <path>` | 同上的显式形式，可重复，也可和位置参数混用。 |
 | `--stdin` | 显式从 stdin 读取输入。与 `<path...>` / `-i` 互斥。 |
 
@@ -232,6 +232,9 @@ authconv accounts/ -f cpa,sub2api --jsonl -o out/
 
 # 输出一个 zip
 authconv accounts/ -f all --zip -o out/
+
+# 导入 zip
+authconv authconv_3-accounts.zip -f cpa -o out/
 
 # 本地打开 Web UI
 authconv --serve

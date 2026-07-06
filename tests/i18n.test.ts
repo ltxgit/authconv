@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectCliLocale, detectWebLocale } from "../src/index.js";
+import { detectCliLocale, detectWebLocale, messagesFor } from "../src/index.js";
 
 describe("authconv i18n", () => {
   it("defaults CLI language to English without explicit selection", () => {
@@ -24,5 +24,10 @@ describe("authconv i18n", () => {
   it("defaults Web language to English without a URL parameter", () => {
     expect(detectWebLocale("")).toBe("en");
     expect(detectWebLocale("?lang=zh")).toBe("zh");
+  });
+
+  it("reports import processed, added, and merged counts", () => {
+    expect(messagesFor("zh").web.fileImported(3, 2, 1)).toBe("已处理 3 个账号，新增 2 个，合并 1 个");
+    expect(messagesFor("en").web.fileImported(3, 2, 1)).toBe("Processed 3 account(s), added 2, merged 1");
   });
 });
