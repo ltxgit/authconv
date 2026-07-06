@@ -895,7 +895,10 @@ html[data-theme="dark"] .theme-tab.active {
 .output-pane {
   padding: 0;
   gap: 14px;
-  overflow: visible;
+  height: calc(100vh - 140px);
+  max-height: calc(100vh - 140px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .pane-title,
@@ -1482,6 +1485,7 @@ textarea:focus-within {
 
 /* User Account Section styling */
 .account-section {
+  min-height: 0;
   padding: 0;
 }
 
@@ -1509,6 +1513,7 @@ textarea:focus-within {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--panel-strong);
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -1653,6 +1658,7 @@ textarea:focus-within {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -1704,8 +1710,8 @@ textarea:focus-within {
 }
 
 .preview {
-  min-height: 360px;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border: 0;
   border-radius: 0;
@@ -1956,7 +1962,10 @@ html[data-theme="dark"] .editor-format-select {
   }
 
   .output-pane {
+    height: auto;
+    max-height: none;
     min-height: auto;
+    overflow: visible;
   }
 
   textarea {
@@ -1965,6 +1974,8 @@ html[data-theme="dark"] .editor-format-select {
 
   .preview {
     min-height: 300px;
+    max-height: min(560px, 60vh);
+    flex: 0 1 auto;
   }
 }
 
@@ -2598,9 +2609,6 @@ Example:
       accountCount: formatFiles.reduce((sum, file) => sum + file.accountCount, 0)
     }));
   }
-  function shouldZip(files, selectedFormatCount) {
-    return selectedFormatCount > 1 || files.length > 1;
-  }
   function effectiveOutputModes(outputModes, outputTextMode) {
     if (outputTextMode !== "jsonl") {
       return outputModes;
@@ -2860,8 +2868,8 @@ Example:
         jsonParseFailed: (error) => `JSON \u89E3\u6790\u5931\u8D25\uFF1A${error}`,
         noAccounts: "\u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002",
         sourceName: (index) => `\u8F93\u5165 ${index}`,
-        sourceImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
-        fileImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
+        sourceImported: (processed, added, merged) => `\u5DF2\u8BFB\u53D6 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76\u91CD\u590D ${merged} \u4E2A`,
+        fileImported: (processed, added, merged) => `\u5DF2\u8BFB\u53D6 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76\u91CD\u590D ${merged} \u4E2A`,
         chooseJsonFile: "\u8BF7\u9009\u62E9 .json\u3001.jsonl \u6216 .zip \u6587\u4EF6\u3002",
         fileNoAccounts: (name) => `${name}: \u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002`,
         fileInvalidInput: (name, error) => `${name}: ${error}`,
@@ -3058,8 +3066,8 @@ Example:
         jsonParseFailed: (error) => `JSON parse failed: ${error}`,
         noAccounts: "No convertible accounts found.",
         sourceName: (index) => `Input ${index}`,
-        sourceImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
-        fileImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+        sourceImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
+        fileImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
         chooseJsonFile: "Choose .json, .jsonl, or .zip files.",
         fileNoAccounts: (name) => `${name}: no convertible accounts found.`,
         fileInvalidInput: (name, error) => `${name}: ${error}`,
@@ -3783,14 +3791,21 @@ Example:
     "sessionToken",
     "idToken"
   ];
-  function dedupeAccounts(accounts) {
+  function dedupeAccountsWithAffectedIndex(accounts, affectedStartIndex = 0) {
     const result = [];
-    for (const account of accounts) {
+    let firstAffectedAccount;
+    for (const [inputIndex, account] of accounts.entries()) {
       const existingAccounts = result.filter((existing2) => hasCompatibleCredentials(existing2, account));
       const existing = existingAccounts[0];
       if (existing) {
+        if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+          firstAffectedAccount = existing;
+        }
         for (const duplicate of existingAccounts.slice(1)) {
           mergeMissingAccountFields(existing, duplicate);
+          if (duplicate === firstAffectedAccount) {
+            firstAffectedAccount = existing;
+          }
           const index = result.indexOf(duplicate);
           if (index >= 0) {
             result.splice(index, 1);
@@ -3800,8 +3815,15 @@ Example:
         continue;
       }
       result.push(account);
+      if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+        firstAffectedAccount = account;
+      }
     }
-    return result;
+    const affectedIndex = firstAffectedAccount ? result.indexOf(firstAffectedAccount) : -1;
+    return {
+      accounts: result,
+      affectedIndex: affectedIndex >= 0 ? affectedIndex : void 0
+    };
   }
   function hasCompatibleCredentials(left, right) {
     let hasSharedCredential = false;
@@ -5185,7 +5207,6 @@ Example:
     previewFormat: "cpa",
     selectedAccountIndex: 0,
     themeMode: "system",
-    files: [],
     serializedFiles: [],
     nextInputIndex: 1,
     forcedInputFormat: "auto",
@@ -5307,10 +5328,14 @@ Example:
       }
     });
     els.jsonInput.addEventListener("input", () => {
+      const hadDraftAccounts = draftAccounts().length > 0;
       const text = els.jsonInput.value.trim();
       state.draftSource = text ? { name: draftSourceName(), path: "draft", text } : void 0;
       state.sourceErrors = [];
       recompute();
+      if (!hadDraftAccounts && draftAccounts().length > 0) {
+        scrollDraftIntoAccountView();
+      }
     });
     els.fileInput.addEventListener("change", () => {
       void readFiles(els.fileInput.files);
@@ -5406,18 +5431,18 @@ Example:
       }
       writeOutputOptionsToUrl();
       renderFormatControls();
-      recompute();
+      recomputeOutput();
     });
     els.jsonlToggle.addEventListener("change", () => {
       state.outputTextMode = els.jsonlToggle.checked ? "jsonl" : "json";
       writeOutputOptionsToUrl();
       renderFormatControls();
-      recompute();
+      recomputeOutput();
     });
     els.fakeIdToggle.addEventListener("change", () => {
       state.allowSyntheticIdToken = els.fakeIdToggle.checked;
       writeOutputOptionsToUrl();
-      recompute();
+      recomputeOutput();
     });
     els.copyButton.addEventListener("click", () => {
       void copyPreview();
@@ -5447,6 +5472,38 @@ Example:
       state.sourceErrors = [];
       state.forcedInputFormat = "auto";
       recompute();
+    });
+    els.accountRows.addEventListener("click", (event) => {
+      const removeButton = accountRemoveButton(event.target);
+      if (removeButton) {
+        const index2 = accountRemoveIndex(removeButton);
+        if (index2 !== void 0) {
+          removeAccount(index2);
+        }
+        return;
+      }
+      const row = accountEventRow(event.target);
+      if (!row) {
+        return;
+      }
+      const index = accountRowIndex(row);
+      if (index !== void 0) {
+        selectPreviewAccount(index);
+      }
+    });
+    els.accountRows.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      const row = accountEventRow(event.target);
+      if (!row || event.target !== row) {
+        return;
+      }
+      const index = accountRowIndex(row);
+      if (index !== void 0) {
+        event.preventDefault();
+        selectPreviewAccount(index);
+      }
     });
   }
   function applyOutputOptionsFromUrl() {
@@ -5579,7 +5636,7 @@ Example:
           }
           writeOutputOptionsToUrl();
           renderFormatControls();
-          recompute();
+          recomputeOutput();
         });
         const label = document.createElement("label");
         label.className = "format-option-label";
@@ -5620,7 +5677,7 @@ Example:
             state.previewFormat = format;
             writeOutputOptionsToUrl();
             syncPreviewTabs();
-            recompute();
+            recomputeOutput();
           });
           tab.addEventListener("keydown", (event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") {
@@ -5630,8 +5687,7 @@ Example:
             const nextIndex = previewTabIndex(index, previewFormats.length, event.key);
             state.previewFormat = previewFormats[nextIndex] ?? state.previewFormat;
             writeOutputOptionsToUrl();
-            syncPreviewTabs();
-            renderPreview();
+            recomputeOutput();
             const tabs = Array.from(els.previewTabsContainer.querySelectorAll(".editor-tab"));
             tabs[nextIndex]?.focus();
           });
@@ -5647,20 +5703,19 @@ Example:
     state.draftParsed = state.draftSource ? parseSource(state.draftSource) : void 0;
     const draft = draftAccounts();
     const activeSource = currentAccountSource();
-    const activeAccounts = activeSource.accounts;
-    if (state.selectedAccountIndex >= activeAccounts.length) {
-      state.selectedAccountIndex = Math.max(activeAccounts.length - 1, 0);
-    }
-    state.files = activeAccounts.length > 0 && state.selectedFormats.length > 0 ? buildOutputPlan(activeAccounts, state.selectedFormats, {
-      outputModes: currentOutputModes(),
-      allowSyntheticIdToken: state.allowSyntheticIdToken
-    }) : [];
-    state.serializedFiles = serializeOutputFiles(state.files, state.outputTextMode);
+    refreshSerializedPreview(activeSource.accounts);
     renderInputError();
     renderInputFormatIndicator();
     renderOutputHeader(activeSource);
     renderPreview();
     renderAccountTable(state.accounts, draft, activeSource.kind);
+  }
+  function recomputeOutput() {
+    const activeSource = currentAccountSource();
+    refreshSerializedPreview(activeSource.accounts);
+    renderOutputHeader(activeSource);
+    renderPreview();
+    syncAccountRowsPreviewability(activeSource);
   }
   function parseSource(source, options = {}) {
     try {
@@ -5778,7 +5833,7 @@ Example:
     const text = webMessages();
     const activeCount = activeSource.accounts.length;
     const canExport = canExportCurrentPlan(activeSource);
-    const zip = canExport && shouldZip(state.serializedFiles, state.selectedFormats.length);
+    const zip = canExport && willDownloadZip(activeCount);
     const fileTypeLabel = state.outputTextMode === "jsonl" ? "JSONL" : "JSON";
     const parts = [];
     if (activeCount > 0) {
@@ -5844,7 +5899,8 @@ Example:
       return;
     }
     els.accountSection.hidden = false;
-    const previewable = previewFiles().length > 1;
+    const activeCount = activeKind === "draft" ? draft.length : accounts.length;
+    const previewable = canSelectPreviewAccount(activeCount);
     els.accountSection.classList.toggle("is-previewable", previewable);
     els.accountRows.replaceChildren(
       ...accounts.map((account, index) => {
@@ -5856,18 +5912,6 @@ Example:
         row.setAttribute("data-account-index", String(index));
         row.setAttribute("role", "option");
         row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
-        row.addEventListener("click", () => {
-          if (rowPreviewable) {
-            selectPreviewAccount(index);
-          }
-        });
-        row.addEventListener("keydown", (event) => {
-          if (!rowPreviewable || event.target !== row || event.key !== "Enter" && event.key !== " ") {
-            return;
-          }
-          event.preventDefault();
-          selectPreviewAccount(index);
-        });
         const labelCell = document.createElement("span");
         labelCell.className = "account-cell account-identity-cell";
         labelCell.dataset.label = text.accountCellAccount;
@@ -5901,18 +5945,6 @@ Example:
         row.setAttribute("role", "option");
         row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
         row.setAttribute("aria-label", text.accountLabelPrefixDraft(accountLabel(account)));
-        row.addEventListener("click", () => {
-          if (rowPreviewable) {
-            selectPreviewAccount(index);
-          }
-        });
-        row.addEventListener("keydown", (event) => {
-          if (!rowPreviewable || event.target !== row || event.key !== "Enter" && event.key !== " ") {
-            return;
-          }
-          event.preventDefault();
-          selectPreviewAccount(index);
-        });
         const labelCell = document.createElement("span");
         labelCell.className = "account-cell account-identity-cell";
         labelCell.dataset.label = text.accountCellAccount;
@@ -5936,9 +5968,20 @@ Example:
     );
   }
   function selectPreviewAccount(index) {
-    state.selectedAccountIndex = index;
+    const activeSource = currentAccountSource();
+    if (!canSelectPreviewAccount(activeSource.accounts.length)) {
+      return;
+    }
+    const boundedIndex = Math.min(Math.max(index, 0), activeSource.accounts.length - 1);
+    if (boundedIndex === state.selectedAccountIndex) {
+      return;
+    }
+    const previousIndex = state.selectedAccountIndex;
+    state.selectedAccountIndex = boundedIndex;
+    state.serializedFiles = buildSerializedPreviewFiles(activeSource.accounts);
     renderPreview();
-    renderAccountTable(state.accounts, draftAccounts(), currentAccountSource().kind);
+    setAccountRowSelected(activeSource.kind, previousIndex, false);
+    setAccountRowSelected(activeSource.kind, boundedIndex, true);
   }
   function addDraftAccounts() {
     const textMessages = webMessages();
@@ -5959,10 +6002,11 @@ Example:
     }
     const beforeCount = state.accounts.length;
     state.accounts.push(...parsed.accounts);
-    state.accounts = dedupeAccounts(state.accounts);
+    const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
+    state.accounts = dedupeResult.accounts;
     const summary = importSummary(parsed.accounts.length, beforeCount, state.accounts.length);
     state.nextInputIndex += 1;
-    state.selectedAccountIndex = beforeCount;
+    state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
     els.jsonInput.value = "";
     clearFileInputs();
     state.draftSource = void 0;
@@ -5986,20 +6030,128 @@ Example:
   function currentOutputModes() {
     return effectiveOutputModes(state.outputModes, state.outputTextMode);
   }
+  function refreshSerializedPreview(accounts) {
+    if (state.selectedAccountIndex >= accounts.length) {
+      state.selectedAccountIndex = Math.max(accounts.length - 1, 0);
+    }
+    state.serializedFiles = buildSerializedPreviewFiles(accounts);
+  }
+  function buildSerializedOutputFiles(accounts, formats) {
+    if (accounts.length === 0 || formats.length === 0) {
+      return [];
+    }
+    return serializeOutputFiles(
+      buildOutputPlan(accounts, formats, {
+        outputModes: currentOutputModes(),
+        allowSyntheticIdToken: state.allowSyntheticIdToken
+      }),
+      state.outputTextMode
+    );
+  }
+  function buildSerializedPreviewFiles(accounts) {
+    if (!state.selectedFormats.includes(state.previewFormat) || accounts.length === 0) {
+      return [];
+    }
+    const boundedIndex = Math.min(state.selectedAccountIndex, accounts.length - 1);
+    const previewAccounts = canSelectPreviewAccount(accounts.length) ? accounts.slice(boundedIndex, boundedIndex + 1) : accounts;
+    return buildSerializedOutputFiles(previewAccounts, [state.previewFormat]);
+  }
   function selectedInputFormat2() {
     return state.forcedInputFormat === "auto" || state.forcedInputFormat === "unknown" ? void 0 : state.forcedInputFormat;
   }
   function currentPreviewFile() {
-    const files = previewFiles();
-    if (files.length > 1) {
-      const previewAccounts = currentAccountSource().accounts;
-      const boundedIndex = Math.min(state.selectedAccountIndex, previewAccounts.length - 1);
-      return files[boundedIndex] ?? files[0];
-    }
-    return files[0];
+    return state.serializedFiles[0];
   }
-  function previewFiles() {
-    return state.serializedFiles.filter((file) => file.format === state.previewFormat);
+  function canSelectPreviewAccount(accountCount) {
+    return accountCount > 1 && isPreviewFormatPerAccount(state.previewFormat);
+  }
+  function isPreviewFormatPerAccount(format) {
+    if (!state.selectedFormats.includes(format)) {
+      return false;
+    }
+    if (state.outputTextMode === "jsonl") {
+      return true;
+    }
+    return !isMergedFormat(format) || currentOutputModes()[format] === "single";
+  }
+  function accountEventRow(target) {
+    if (!(target instanceof HTMLElement)) {
+      return void 0;
+    }
+    const row = target.closest(".account-row.is-selectable");
+    return row && els.accountRows.contains(row) ? row : void 0;
+  }
+  function accountRemoveButton(target) {
+    if (!(target instanceof HTMLElement)) {
+      return void 0;
+    }
+    const button = target.closest(".remove-account-button");
+    return button && els.accountRows.contains(button) ? button : void 0;
+  }
+  function accountRemoveIndex(button) {
+    const rawIndex = button.dataset.removeAccountIndex;
+    if (rawIndex === void 0) {
+      return void 0;
+    }
+    const index = Number(rawIndex);
+    return Number.isInteger(index) && index >= 0 ? index : void 0;
+  }
+  function accountRowIndex(row) {
+    const rawIndex = row.dataset.accountIndex ?? row.dataset.draftIndex;
+    if (rawIndex === void 0) {
+      return void 0;
+    }
+    const index = Number(rawIndex);
+    return Number.isInteger(index) && index >= 0 ? index : void 0;
+  }
+  function setAccountRowSelected(kind, index, selected) {
+    if (kind !== "loaded" && kind !== "draft") {
+      return;
+    }
+    const attribute = kind === "loaded" ? "data-account-index" : "data-draft-index";
+    const row = els.accountRows.querySelector(`[${attribute}="${index}"]`);
+    row?.setAttribute("aria-selected", String(selected));
+  }
+  function scrollDraftIntoAccountView() {
+    requestAnimationFrame(() => {
+      const row = els.accountRows.querySelector('[data-draft-index="0"]');
+      if (!row) {
+        return;
+      }
+      scrollElementIntoContainer(row, els.accountRows);
+    });
+  }
+  function scrollElementIntoContainer(element, container) {
+    const elementRect = element.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    if (elementRect.top < containerRect.top) {
+      container.scrollTop -= containerRect.top - elementRect.top;
+    } else if (elementRect.bottom > containerRect.bottom) {
+      container.scrollTop += elementRect.bottom - containerRect.bottom;
+    }
+  }
+  function syncAccountRowsPreviewability(activeSource) {
+    if (activeSource.kind === "empty") {
+      return;
+    }
+    const previewable = canSelectPreviewAccount(activeSource.accounts.length);
+    const previousPreviewable = els.accountSection.classList.contains("is-previewable");
+    if (previewable === previousPreviewable) {
+      return;
+    }
+    els.accountSection.classList.toggle("is-previewable", previewable);
+    syncAccountRowsByKind("loaded", activeSource.kind === "loaded" && previewable);
+    syncAccountRowsByKind("draft", activeSource.kind === "draft" && previewable);
+  }
+  function syncAccountRowsByKind(kind, selectable) {
+    const selector = kind === "loaded" ? "[data-account-index]" : "[data-draft-index]";
+    const rows = els.accountRows.querySelectorAll(selector);
+    rows.forEach((row) => {
+      const index = accountRowIndex(row);
+      row.classList.toggle("is-selectable", selectable);
+      row.tabIndex = selectable ? 0 : -1;
+      row.setAttribute("aria-selected", String(selectable && index === state.selectedAccountIndex));
+    });
   }
   async function readFiles(fileList) {
     try {
@@ -6048,9 +6200,10 @@ Example:
     const nextAccounts = parsed.flatMap((item) => item.accounts);
     if (nextAccounts.length > 0) {
       const beforeCount = state.accounts.length;
-      state.selectedAccountIndex = beforeCount;
       state.accounts.push(...nextAccounts);
-      state.accounts = dedupeAccounts(state.accounts);
+      const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
+      state.accounts = dedupeResult.accounts;
+      state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
       const summary = importSummary(nextAccounts.length, beforeCount, state.accounts.length);
       triggerLogoSparkle();
       showToast(text.fileImported(summary.processed, summary.added, summary.merged));
@@ -6244,27 +6397,32 @@ Example:
   }
   async function downloadCurrentPlan() {
     const text = webMessages();
-    if (state.downloadBusy || !canExportCurrentPlan(currentAccountSource())) {
+    const activeSource = currentAccountSource();
+    if (state.downloadBusy || !canExportCurrentPlan(activeSource)) {
       return;
     }
-    const zip = shouldZip(state.serializedFiles, state.selectedFormats.length);
+    const zip = willDownloadZip(activeSource.accounts.length);
     if (zip) {
       state.downloadBusy = true;
-      renderOutputHeader(currentAccountSource());
+      renderOutputHeader(activeSource);
       try {
         await nextAnimationFrame();
-        const bytes = zipOutputFiles(state.serializedFiles);
+        const serializedFiles = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats);
+        const bytes = zipOutputFiles(serializedFiles);
         const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        const name = zipDownloadName(currentAccountSource().accounts);
+        const name = zipDownloadName(activeSource.accounts);
         downloadBlob(new Blob([payload], { type: "application/zip" }), name);
         showToast(text.exportZipToast(name));
       } finally {
         state.downloadBusy = false;
-        renderOutputHeader(currentAccountSource());
+        renderOutputHeader(activeSource);
       }
       return;
     }
-    const file = state.serializedFiles[0];
+    const file = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats)[0];
+    if (!file) {
+      return;
+    }
     downloadBlob(new Blob([file.text], { type: outputMimeType() }), file.path.split("/").pop() ?? outputFallbackName());
     showToast(text.exportFileToast);
   }
@@ -6307,7 +6465,7 @@ Example:
       };
       writeOutputOptionsToUrl();
       renderFormatControls();
-      recompute();
+      recomputeOutput();
     });
     control.append(button);
     return control;
@@ -6417,11 +6575,8 @@ Example:
     button.type = "button";
     button.className = "remove-account-button";
     button.textContent = text.remove;
+    button.dataset.removeAccountIndex = String(index);
     button.setAttribute("aria-label", text.removeAccount(accountLabel(account)));
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      removeAccount(index);
-    });
     cell.append(button);
     return cell;
   }
@@ -6445,7 +6600,23 @@ Example:
     return state.outputTextMode === "jsonl" ? "authconv.jsonl" : "authconv.json";
   }
   function canExportCurrentPlan(activeSource) {
-    return state.serializedFiles.length > 0 && activeSource.accounts.length > 0;
+    return state.selectedFormats.length > 0 && activeSource.accounts.length > 0;
+  }
+  function willDownloadZip(accountCount) {
+    if (accountCount <= 0 || state.selectedFormats.length === 0) {
+      return false;
+    }
+    if (state.selectedFormats.length > 1) {
+      return true;
+    }
+    if (state.outputTextMode === "jsonl") {
+      return false;
+    }
+    const format = state.selectedFormats[0];
+    if (isMergedFormat(format) && currentOutputModes()[format] !== "single") {
+      return false;
+    }
+    return accountCount > 1;
   }
   function renderTextModeControl() {
     els.jsonlToggle.checked = state.outputTextMode === "jsonl";

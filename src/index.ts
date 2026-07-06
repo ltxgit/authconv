@@ -2,7 +2,7 @@ export { buildOutputPlan, effectiveOutputModes, outputFileText, serializeOutputF
 export { parseFormatList } from "./formats.js";
 export { FORMAT_LABELS, detectCliLocale, detectWebLocale, inputFormatLabel, localeName, messagesFor, normalizeLocale } from "./i18n.js";
 export { parseInputPayload, parseInputPayloadWithMeta } from "./json-input.js";
-export { dedupeAccounts, detectInputFormat, normalizeInput } from "./normalize.js";
+export { dedupeAccounts, dedupeAccountsWithAffectedIndex, detectInputFormat, normalizeInput } from "./normalize.js";
 export { renderFormat } from "./renderers.js";
 export { zipOutputFiles } from "./zip.js";
 export type {

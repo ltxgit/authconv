@@ -955,6 +955,36 @@ describe("authconv core", () => {
     expect(deduped[0].sessionToken).toBe("session-token");
   });
 
+  it("reports the existing row affected by a duplicate import", async () => {
+    const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput({ access_token: "token-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
+      normalizeInput({ access_token: "token-b", email: "b@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
+      normalizeInput({ access_token: "token-a", refresh_token: "refresh-a" }, { sourceName: "duplicate.json", sourcePath: "duplicate.json" }).accounts[0],
+    ];
+
+    const result = dedupeAccountsWithAffectedIndex(accounts, 2);
+
+    expect(result.accounts).toHaveLength(2);
+    expect(result.affectedIndex).toBe(0);
+    expect(result.accounts[0].refreshToken).toBe("refresh-a");
+  });
+
+  it("reports the retained row affected by a bridge import", async () => {
+    const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
+    const accounts = [
+      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
+      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
+      normalizeInput({ refresh_token: "refresh-token", session_token: "session-token" }, { sourceName: "bridge.json", sourcePath: "bridge.json" }).accounts[0],
+    ];
+
+    const result = dedupeAccountsWithAffectedIndex(accounts, 2);
+
+    expect(result.accounts).toHaveLength(1);
+    expect(result.affectedIndex).toBe(0);
+    expect(result.accounts[0].sessionToken).toBe("session-token");
+  });
+
   it("replaces a compatible synthetic id_token with a real id_token", async () => {
     const { dedupeAccounts } = await import("../src/index.js");
     const synthetic = normalizeInput({

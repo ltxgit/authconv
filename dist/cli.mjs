@@ -527,8 +527,8 @@ var MESSAGES = {
       jsonParseFailed: (error) => `JSON \u89E3\u6790\u5931\u8D25\uFF1A${error}`,
       noAccounts: "\u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002",
       sourceName: (index) => `\u8F93\u5165 ${index}`,
-      sourceImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
-      fileImported: (processed, added, merged) => `\u5DF2\u5904\u7406 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76 ${merged} \u4E2A`,
+      sourceImported: (processed, added, merged) => `\u5DF2\u8BFB\u53D6 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76\u91CD\u590D ${merged} \u4E2A`,
+      fileImported: (processed, added, merged) => `\u5DF2\u8BFB\u53D6 ${processed} \u4E2A\u8D26\u53F7\uFF0C\u65B0\u589E ${added} \u4E2A\uFF0C\u5408\u5E76\u91CD\u590D ${merged} \u4E2A`,
       chooseJsonFile: "\u8BF7\u9009\u62E9 .json\u3001.jsonl \u6216 .zip \u6587\u4EF6\u3002",
       fileNoAccounts: (name) => `${name}: \u672A\u8BC6\u522B\u5230\u53EF\u8F6C\u6362\u8D26\u53F7\u3002`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
@@ -725,8 +725,8 @@ Example:
       jsonParseFailed: (error) => `JSON parse failed: ${error}`,
       noAccounts: "No convertible accounts found.",
       sourceName: (index) => `Input ${index}`,
-      sourceImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
-      fileImported: (processed, added, merged) => `Processed ${processed} account(s), added ${added}, merged ${merged}`,
+      sourceImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
+      fileImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
       chooseJsonFile: "Choose .json, .jsonl, or .zip files.",
       fileNoAccounts: (name) => `${name}: no convertible accounts found.`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
@@ -1454,13 +1454,23 @@ var DEDUPE_CREDENTIAL_KEYS = [
   "idToken"
 ];
 function dedupeAccounts(accounts) {
+  return dedupeAccountsWithAffectedIndex(accounts).accounts;
+}
+function dedupeAccountsWithAffectedIndex(accounts, affectedStartIndex = 0) {
   const result = [];
-  for (const account of accounts) {
+  let firstAffectedAccount;
+  for (const [inputIndex, account] of accounts.entries()) {
     const existingAccounts = result.filter((existing2) => hasCompatibleCredentials(existing2, account));
     const existing = existingAccounts[0];
     if (existing) {
+      if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+        firstAffectedAccount = existing;
+      }
       for (const duplicate of existingAccounts.slice(1)) {
         mergeMissingAccountFields(existing, duplicate);
+        if (duplicate === firstAffectedAccount) {
+          firstAffectedAccount = existing;
+        }
         const index = result.indexOf(duplicate);
         if (index >= 0) {
           result.splice(index, 1);
@@ -1470,8 +1480,15 @@ function dedupeAccounts(accounts) {
       continue;
     }
     result.push(account);
+    if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+      firstAffectedAccount = account;
+    }
   }
-  return result;
+  const affectedIndex = firstAffectedAccount ? result.indexOf(firstAffectedAccount) : -1;
+  return {
+    accounts: result,
+    affectedIndex: affectedIndex >= 0 ? affectedIndex : void 0
+  };
 }
 function hasCompatibleCredentials(left, right) {
   let hasSharedCredential = false;

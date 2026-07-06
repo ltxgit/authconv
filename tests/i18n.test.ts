@@ -27,7 +27,7 @@ describe("authconv i18n", () => {
   });
 
   it("reports import processed, added, and merged counts", () => {
-    expect(messagesFor("zh").web.fileImported(3, 2, 1)).toBe("已处理 3 个账号，新增 2 个，合并 1 个");
-    expect(messagesFor("en").web.fileImported(3, 2, 1)).toBe("Processed 3 account(s), added 2, merged 1");
+    expect(messagesFor("zh").web.fileImported(3, 2, 1)).toBe("已读取 3 个账号，新增 2 个，合并重复 1 个");
+    expect(messagesFor("en").web.fileImported(3, 2, 1)).toBe("Read 3 account(s), added 2, merged 1 duplicate(s)");
   });
 });

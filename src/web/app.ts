@@ -1,6 +1,6 @@
 import {
   buildOutputPlan,
-  dedupeAccounts,
+  dedupeAccountsWithAffectedIndex,
   detectWebLocale,
   detectInputFormat,
   FORMAT_LABELS,
@@ -10,10 +10,8 @@ import {
   normalizeLocale,
   parseInputPayloadWithMeta,
   serializeOutputFiles,
-  shouldZip,
   type Locale,
   type NormalizedAccount,
-  type OutputFile,
   type OutputFormat,
   type OutputMode,
   type OutputModes,
@@ -124,7 +122,6 @@ type ViewState = {
   previewFormat: OutputFormat;
   selectedAccountIndex: number;
   themeMode: ThemeMode;
-  files: OutputFile[];
   serializedFiles: SerializedOutputFile[];
   nextInputIndex: number;
   forcedInputFormat: InputFormat | "auto";
@@ -145,7 +142,6 @@ const state: ViewState = {
   previewFormat: "cpa",
   selectedAccountIndex: 0,
   themeMode: "system",
-  files: [],
   serializedFiles: [],
   nextInputIndex: 1,
   forcedInputFormat: "auto",
@@ -290,10 +286,14 @@ function bindEvents(): void {
   });
 
   els.jsonInput.addEventListener("input", () => {
+    const hadDraftAccounts = draftAccounts().length > 0;
     const text = els.jsonInput.value.trim();
     state.draftSource = text ? { name: draftSourceName(), path: "draft", text } : undefined;
     state.sourceErrors = [];
     recompute();
+    if (!hadDraftAccounts && draftAccounts().length > 0) {
+      scrollDraftIntoAccountView();
+    }
   });
 
   els.fileInput.addEventListener("change", () => {
@@ -398,20 +398,20 @@ function bindEvents(): void {
     }
     writeOutputOptionsToUrl();
     renderFormatControls();
-    recompute();
+    recomputeOutput();
   });
 
   els.jsonlToggle.addEventListener("change", () => {
     state.outputTextMode = els.jsonlToggle.checked ? "jsonl" : "json";
     writeOutputOptionsToUrl();
     renderFormatControls();
-    recompute();
+    recomputeOutput();
   });
 
   els.fakeIdToggle.addEventListener("change", () => {
     state.allowSyntheticIdToken = els.fakeIdToggle.checked;
     writeOutputOptionsToUrl();
-    recompute();
+    recomputeOutput();
   });
 
   els.copyButton.addEventListener("click", () => {
@@ -448,6 +448,40 @@ function bindEvents(): void {
     state.sourceErrors = [];
     state.forcedInputFormat = "auto";
     recompute();
+  });
+
+  els.accountRows.addEventListener("click", (event) => {
+    const removeButton = accountRemoveButton(event.target);
+    if (removeButton) {
+      const index = accountRemoveIndex(removeButton);
+      if (index !== undefined) {
+        removeAccount(index);
+      }
+      return;
+    }
+    const row = accountEventRow(event.target);
+    if (!row) {
+      return;
+    }
+    const index = accountRowIndex(row);
+    if (index !== undefined) {
+      selectPreviewAccount(index);
+    }
+  });
+
+  els.accountRows.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    const row = accountEventRow(event.target);
+    if (!row || event.target !== row) {
+      return;
+    }
+    const index = accountRowIndex(row);
+    if (index !== undefined) {
+      event.preventDefault();
+      selectPreviewAccount(index);
+    }
   });
 }
 
@@ -593,7 +627,7 @@ function renderFormatControls(): void {
         }
         writeOutputOptionsToUrl();
         renderFormatControls();
-        recompute();
+        recomputeOutput();
       });
 
       const label = document.createElement("label");
@@ -638,7 +672,7 @@ function renderFormatControls(): void {
           state.previewFormat = format;
           writeOutputOptionsToUrl();
           syncPreviewTabs();
-          recompute();
+          recomputeOutput();
         });
         tab.addEventListener("keydown", (event) => {
           if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") {
@@ -648,8 +682,7 @@ function renderFormatControls(): void {
           const nextIndex = previewTabIndex(index, previewFormats.length, event.key);
           state.previewFormat = previewFormats[nextIndex] ?? state.previewFormat;
           writeOutputOptionsToUrl();
-          syncPreviewTabs();
-          renderPreview();
+          recomputeOutput();
           const tabs = Array.from(els.previewTabsContainer.querySelectorAll<HTMLButtonElement>(".editor-tab"));
           tabs[nextIndex]?.focus();
         });
@@ -668,26 +701,21 @@ function recompute(): void {
 
   const draft = draftAccounts();
   const activeSource = currentAccountSource();
-  const activeAccounts = activeSource.accounts;
-
-  if (state.selectedAccountIndex >= activeAccounts.length) {
-    state.selectedAccountIndex = Math.max(activeAccounts.length - 1, 0);
-  }
-
-  state.files =
-    activeAccounts.length > 0 && state.selectedFormats.length > 0
-      ? buildOutputPlan(activeAccounts, state.selectedFormats, {
-          outputModes: currentOutputModes(),
-          allowSyntheticIdToken: state.allowSyntheticIdToken,
-        })
-      : [];
-  state.serializedFiles = serializeOutputFiles(state.files, state.outputTextMode);
+  refreshSerializedPreview(activeSource.accounts);
 
   renderInputError();
   renderInputFormatIndicator();
   renderOutputHeader(activeSource);
   renderPreview();
   renderAccountTable(state.accounts, draft, activeSource.kind);
+}
+
+function recomputeOutput(): void {
+  const activeSource = currentAccountSource();
+  refreshSerializedPreview(activeSource.accounts);
+  renderOutputHeader(activeSource);
+  renderPreview();
+  syncAccountRowsPreviewability(activeSource);
 }
 
 function parseSource(source: JsonSource, options: { forceAutoInputFormat?: boolean } = {}): ParsedSource {
@@ -827,7 +855,7 @@ function renderOutputHeader(activeSource: ReturnType<typeof activeAccountSource>
   const text = webMessages();
   const activeCount = activeSource.accounts.length;
   const canExport = canExportCurrentPlan(activeSource);
-  const zip = canExport && shouldZip(state.serializedFiles, state.selectedFormats.length);
+  const zip = canExport && willDownloadZip(activeCount);
   const fileTypeLabel = state.outputTextMode === "jsonl" ? "JSONL" : "JSON";
   const parts = [];
   if (activeCount > 0) {
@@ -904,7 +932,8 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
   }
 
   els.accountSection.hidden = false;
-  const previewable = previewFiles().length > 1;
+  const activeCount = activeKind === "draft" ? draft.length : accounts.length;
+  const previewable = canSelectPreviewAccount(activeCount);
   els.accountSection.classList.toggle("is-previewable", previewable);
   els.accountRows.replaceChildren(
     ...accounts.map((account, index) => {
@@ -916,18 +945,6 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
       row.setAttribute("data-account-index", String(index));
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
-      row.addEventListener("click", () => {
-        if (rowPreviewable) {
-          selectPreviewAccount(index);
-        }
-      });
-      row.addEventListener("keydown", (event) => {
-        if (!rowPreviewable || event.target !== row || (event.key !== "Enter" && event.key !== " ")) {
-          return;
-        }
-        event.preventDefault();
-        selectPreviewAccount(index);
-      });
 
       // Special rendering for first cell (Account Name + Badge)
       const labelCell = document.createElement("span");
@@ -968,18 +985,6 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
       row.setAttribute("aria-label", text.accountLabelPrefixDraft(accountLabel(account)));
-      row.addEventListener("click", () => {
-        if (rowPreviewable) {
-          selectPreviewAccount(index);
-        }
-      });
-      row.addEventListener("keydown", (event) => {
-        if (!rowPreviewable || event.target !== row || (event.key !== "Enter" && event.key !== " ")) {
-          return;
-        }
-        event.preventDefault();
-        selectPreviewAccount(index);
-      });
 
       // Special rendering for Draft row first cell
       const labelCell = document.createElement("span");
@@ -1010,9 +1015,20 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
 }
 
 function selectPreviewAccount(index: number): void {
-  state.selectedAccountIndex = index;
+  const activeSource = currentAccountSource();
+  if (!canSelectPreviewAccount(activeSource.accounts.length)) {
+    return;
+  }
+  const boundedIndex = Math.min(Math.max(index, 0), activeSource.accounts.length - 1);
+  if (boundedIndex === state.selectedAccountIndex) {
+    return;
+  }
+  const previousIndex = state.selectedAccountIndex;
+  state.selectedAccountIndex = boundedIndex;
+  state.serializedFiles = buildSerializedPreviewFiles(activeSource.accounts);
   renderPreview();
-  renderAccountTable(state.accounts, draftAccounts(), currentAccountSource().kind);
+  setAccountRowSelected(activeSource.kind, previousIndex, false);
+  setAccountRowSelected(activeSource.kind, boundedIndex, true);
 }
 
 function addDraftAccounts(): void {
@@ -1034,10 +1050,11 @@ function addDraftAccounts(): void {
   }
   const beforeCount = state.accounts.length;
   state.accounts.push(...parsed.accounts);
-  state.accounts = dedupeAccounts(state.accounts);
+  const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
+  state.accounts = dedupeResult.accounts;
   const summary = importSummary(parsed.accounts.length, beforeCount, state.accounts.length);
   state.nextInputIndex += 1;
-  state.selectedAccountIndex = beforeCount;
+  state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
   els.jsonInput.value = "";
   clearFileInputs();
   state.draftSource = undefined;
@@ -1066,6 +1083,37 @@ function currentOutputModes(): OutputModes {
   return effectiveWebOutputModes(state.outputModes, state.outputTextMode);
 }
 
+function refreshSerializedPreview(accounts: NormalizedAccount[]): void {
+  if (state.selectedAccountIndex >= accounts.length) {
+    state.selectedAccountIndex = Math.max(accounts.length - 1, 0);
+  }
+  state.serializedFiles = buildSerializedPreviewFiles(accounts);
+}
+
+function buildSerializedOutputFiles(accounts: NormalizedAccount[], formats: OutputFormat[]): SerializedOutputFile[] {
+  if (accounts.length === 0 || formats.length === 0) {
+    return [];
+  }
+  return serializeOutputFiles(
+    buildOutputPlan(accounts, formats, {
+      outputModes: currentOutputModes(),
+      allowSyntheticIdToken: state.allowSyntheticIdToken,
+    }),
+    state.outputTextMode,
+  );
+}
+
+function buildSerializedPreviewFiles(accounts: NormalizedAccount[]): SerializedOutputFile[] {
+  if (!state.selectedFormats.includes(state.previewFormat) || accounts.length === 0) {
+    return [];
+  }
+  const boundedIndex = Math.min(state.selectedAccountIndex, accounts.length - 1);
+  const previewAccounts = canSelectPreviewAccount(accounts.length)
+    ? accounts.slice(boundedIndex, boundedIndex + 1)
+    : accounts;
+  return buildSerializedOutputFiles(previewAccounts, [state.previewFormat]);
+}
+
 function selectedInputFormat(): InputFormat | undefined {
   return state.forcedInputFormat === "auto" || state.forcedInputFormat === "unknown"
     ? undefined
@@ -1073,17 +1121,110 @@ function selectedInputFormat(): InputFormat | undefined {
 }
 
 function currentPreviewFile(): SerializedOutputFile | undefined {
-  const files = previewFiles();
-  if (files.length > 1) {
-    const previewAccounts = currentAccountSource().accounts;
-    const boundedIndex = Math.min(state.selectedAccountIndex, previewAccounts.length - 1);
-    return files[boundedIndex] ?? files[0];
-  }
-  return files[0];
+  return state.serializedFiles[0];
 }
 
-function previewFiles(): SerializedOutputFile[] {
-  return state.serializedFiles.filter((file) => file.format === state.previewFormat);
+function canSelectPreviewAccount(accountCount: number): boolean {
+  return accountCount > 1 && isPreviewFormatPerAccount(state.previewFormat);
+}
+
+function isPreviewFormatPerAccount(format: OutputFormat): boolean {
+  if (!state.selectedFormats.includes(format)) {
+    return false;
+  }
+  if (state.outputTextMode === "jsonl") {
+    return true;
+  }
+  return !isMergedFormat(format) || currentOutputModes()[format] === "single";
+}
+
+function accountEventRow(target: EventTarget | null): HTMLElement | undefined {
+  if (!(target instanceof HTMLElement)) {
+    return undefined;
+  }
+  const row = target.closest<HTMLElement>(".account-row.is-selectable");
+  return row && els.accountRows.contains(row) ? row : undefined;
+}
+
+function accountRemoveButton(target: EventTarget | null): HTMLButtonElement | undefined {
+  if (!(target instanceof HTMLElement)) {
+    return undefined;
+  }
+  const button = target.closest<HTMLButtonElement>(".remove-account-button");
+  return button && els.accountRows.contains(button) ? button : undefined;
+}
+
+function accountRemoveIndex(button: HTMLButtonElement): number | undefined {
+  const rawIndex = button.dataset.removeAccountIndex;
+  if (rawIndex === undefined) {
+    return undefined;
+  }
+  const index = Number(rawIndex);
+  return Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+function accountRowIndex(row: HTMLElement): number | undefined {
+  const rawIndex = row.dataset.accountIndex ?? row.dataset.draftIndex;
+  if (rawIndex === undefined) {
+    return undefined;
+  }
+  const index = Number(rawIndex);
+  return Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+function setAccountRowSelected(kind: AccountSourceKind, index: number, selected: boolean): void {
+  if (kind !== "loaded" && kind !== "draft") {
+    return;
+  }
+  const attribute = kind === "loaded" ? "data-account-index" : "data-draft-index";
+  const row = els.accountRows.querySelector<HTMLElement>(`[${attribute}="${index}"]`);
+  row?.setAttribute("aria-selected", String(selected));
+}
+
+function scrollDraftIntoAccountView(): void {
+  requestAnimationFrame(() => {
+    const row = els.accountRows.querySelector<HTMLElement>("[data-draft-index=\"0\"]");
+    if (!row) {
+      return;
+    }
+    scrollElementIntoContainer(row, els.accountRows);
+  });
+}
+
+function scrollElementIntoContainer(element: HTMLElement, container: HTMLElement): void {
+  const elementRect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  if (elementRect.top < containerRect.top) {
+    container.scrollTop -= containerRect.top - elementRect.top;
+  } else if (elementRect.bottom > containerRect.bottom) {
+    container.scrollTop += elementRect.bottom - containerRect.bottom;
+  }
+}
+
+function syncAccountRowsPreviewability(activeSource: ReturnType<typeof activeAccountSource>): void {
+  if (activeSource.kind === "empty") {
+    return;
+  }
+  const previewable = canSelectPreviewAccount(activeSource.accounts.length);
+  const previousPreviewable = els.accountSection.classList.contains("is-previewable");
+  if (previewable === previousPreviewable) {
+    return;
+  }
+
+  els.accountSection.classList.toggle("is-previewable", previewable);
+  syncAccountRowsByKind("loaded", activeSource.kind === "loaded" && previewable);
+  syncAccountRowsByKind("draft", activeSource.kind === "draft" && previewable);
+}
+
+function syncAccountRowsByKind(kind: Exclude<AccountSourceKind, "empty">, selectable: boolean): void {
+  const selector = kind === "loaded" ? "[data-account-index]" : "[data-draft-index]";
+  const rows = els.accountRows.querySelectorAll<HTMLElement>(selector);
+  rows.forEach((row) => {
+    const index = accountRowIndex(row);
+    row.classList.toggle("is-selectable", selectable);
+    row.tabIndex = selectable ? 0 : -1;
+    row.setAttribute("aria-selected", String(selectable && index === state.selectedAccountIndex));
+  });
 }
 
 async function readFiles(fileList: FileList | null): Promise<void> {
@@ -1136,9 +1277,10 @@ async function readSources(sources: JsonSource[], itemCount: number): Promise<vo
   const nextAccounts = parsed.flatMap((item) => item.accounts);
   if (nextAccounts.length > 0) {
     const beforeCount = state.accounts.length;
-    state.selectedAccountIndex = beforeCount;
     state.accounts.push(...nextAccounts);
-    state.accounts = dedupeAccounts(state.accounts);
+    const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
+    state.accounts = dedupeResult.accounts;
+    state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
     const summary = importSummary(nextAccounts.length, beforeCount, state.accounts.length);
     triggerLogoSparkle();
     showToast(text.fileImported(summary.processed, summary.added, summary.merged));
@@ -1370,29 +1512,34 @@ async function copyPreview(): Promise<void> {
 
 async function downloadCurrentPlan(): Promise<void> {
   const text = webMessages();
-  if (state.downloadBusy || !canExportCurrentPlan(currentAccountSource())) {
+  const activeSource = currentAccountSource();
+  if (state.downloadBusy || !canExportCurrentPlan(activeSource)) {
     return;
   }
 
-  const zip = shouldZip(state.serializedFiles, state.selectedFormats.length);
+  const zip = willDownloadZip(activeSource.accounts.length);
   if (zip) {
     state.downloadBusy = true;
-    renderOutputHeader(currentAccountSource());
+    renderOutputHeader(activeSource);
     try {
       await nextAnimationFrame();
-      const bytes = zipOutputFiles(state.serializedFiles);
+      const serializedFiles = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats);
+      const bytes = zipOutputFiles(serializedFiles);
       const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const name = zipDownloadName(currentAccountSource().accounts);
+      const name = zipDownloadName(activeSource.accounts);
       downloadBlob(new Blob([payload], { type: "application/zip" }), name);
       showToast(text.exportZipToast(name));
     } finally {
       state.downloadBusy = false;
-      renderOutputHeader(currentAccountSource());
+      renderOutputHeader(activeSource);
     }
     return;
   }
 
-  const file = state.serializedFiles[0];
+  const file = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats)[0];
+  if (!file) {
+    return;
+  }
   downloadBlob(new Blob([file.text], { type: outputMimeType() }), file.path.split("/").pop() ?? outputFallbackName());
   showToast(text.exportFileToast);
 }
@@ -1439,7 +1586,7 @@ function renderFormatModeControl(format: OutputFormat): HTMLSpanElement {
     };
     writeOutputOptionsToUrl();
     renderFormatControls();
-    recompute();
+    recomputeOutput();
   });
 
   control.append(button);
@@ -1565,11 +1712,8 @@ function accountActionCell(account: NormalizedAccount, index: number): HTMLSpanE
   button.type = "button";
   button.className = "remove-account-button";
   button.textContent = text.remove;
+  button.dataset.removeAccountIndex = String(index);
   button.setAttribute("aria-label", text.removeAccount(accountLabel(account)));
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    removeAccount(index);
-  });
   cell.append(button);
   return cell;
 }
@@ -1599,7 +1743,24 @@ function outputFallbackName(): string {
 }
 
 function canExportCurrentPlan(activeSource: ReturnType<typeof activeAccountSource>): boolean {
-  return state.serializedFiles.length > 0 && activeSource.accounts.length > 0;
+  return state.selectedFormats.length > 0 && activeSource.accounts.length > 0;
+}
+
+function willDownloadZip(accountCount: number): boolean {
+  if (accountCount <= 0 || state.selectedFormats.length === 0) {
+    return false;
+  }
+  if (state.selectedFormats.length > 1) {
+    return true;
+  }
+  if (state.outputTextMode === "jsonl") {
+    return false;
+  }
+  const format = state.selectedFormats[0];
+  if (isMergedFormat(format) && currentOutputModes()[format] !== "single") {
+    return false;
+  }
+  return accountCount > 1;
 }
 
 function renderTextModeControl(): void {

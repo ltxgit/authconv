@@ -577,17 +577,36 @@ const DEDUPE_CREDENTIAL_KEYS = [
   "idToken",
 ] as const satisfies readonly (keyof NormalizedAccount)[];
 
+export type DedupeAccountsResult = {
+  accounts: NormalizedAccount[];
+  affectedIndex: number | undefined;
+};
+
 /**
  * 凭据字段逐项兼容时去重：两边都有值就必须相等，缺失不算冲突。
  */
 export function dedupeAccounts(accounts: NormalizedAccount[]): NormalizedAccount[] {
+  return dedupeAccountsWithAffectedIndex(accounts).accounts;
+}
+
+export function dedupeAccountsWithAffectedIndex(
+  accounts: NormalizedAccount[],
+  affectedStartIndex = 0,
+): DedupeAccountsResult {
   const result: NormalizedAccount[] = [];
-  for (const account of accounts) {
+  let firstAffectedAccount: NormalizedAccount | undefined;
+  for (const [inputIndex, account] of accounts.entries()) {
     const existingAccounts = result.filter((existing) => hasCompatibleCredentials(existing, account));
     const existing = existingAccounts[0];
     if (existing) {
+      if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+        firstAffectedAccount = existing;
+      }
       for (const duplicate of existingAccounts.slice(1)) {
         mergeMissingAccountFields(existing, duplicate);
+        if (duplicate === firstAffectedAccount) {
+          firstAffectedAccount = existing;
+        }
         const index = result.indexOf(duplicate);
         if (index >= 0) {
           result.splice(index, 1);
@@ -597,8 +616,15 @@ export function dedupeAccounts(accounts: NormalizedAccount[]): NormalizedAccount
       continue;
     }
     result.push(account);
+    if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
+      firstAffectedAccount = account;
+    }
   }
-  return result;
+  const affectedIndex = firstAffectedAccount ? result.indexOf(firstAffectedAccount) : -1;
+  return {
+    accounts: result,
+    affectedIndex: affectedIndex >= 0 ? affectedIndex : undefined,
+  };
 }
 
 function hasCompatibleCredentials(left: NormalizedAccount, right: NormalizedAccount): boolean {
