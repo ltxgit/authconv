@@ -103,25 +103,22 @@
               id="jsonInput"
               aria-label="JSON credential input"
               spellcheck="false"
-              placeholder='Paste a ChatGPT /api/auth/session JSON response, Codex auth.json, JSONL text, or drop multi-account JSON exports below...
+              placeholder='粘贴 ChatGPT Session、Codex auth.json、JSONL，或拖入多账号导出文件。
 
-Example:
+示例：
 {
   "access_token": "sample-access-token",
   "refresh_token": "sample-refresh-token",
   "session_token": "sample-session-token",
   "email": "user@example.com",
-  "name": "Example User",
   "chatgpt_account_id": "acct_example",
-  "chatgpt_user_id": "user_example",
   "plan_type": "plus",
-  "last_refresh": "2026-07-03T00:00:00.000Z",
   "expires_at": "2026-07-03T01:00:00.000Z"
 }'
             ></textarea>
             <div class="editor-decor">
               <div class="decor-left editor-status-left">
-                <span>JSON Raw Input</span>
+                <span>JSON / JSONL</span>
                 <span id="inputFormatContainer" class="editor-format-container" hidden>
                   <span class="decor-separator">|</span>
                   <select id="inputFormatSelect" class="editor-format-select" aria-label="Input format"></select>
@@ -136,8 +133,8 @@ Example:
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
             </svg>
             <div class="drop-text">
-              <strong id="dropTitle">Choose or drop .json / .jsonl / .zip credential files</strong>
-              <span id="dropSub">Drop files or folders</span>
+              <strong id="dropTitle">导入凭据文件</strong>
+              <span id="dropSub">.json / .jsonl / .zip，支持文件夹拖入</span>
             </div>
             <div class="drop-actions">
               <button id="fileButton" type="button" class="btn btn-secondary btn-sm drop-file-button">Choose File</button>

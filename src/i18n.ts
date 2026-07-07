@@ -340,25 +340,22 @@ export const MESSAGES: Record<Locale, Messages> = {
       addDraftButton: "加入列表",
       clearButton: "清空",
       inputAria: "JSON 凭据输入",
-      inputPlaceholder: `请在此处直接粘贴 ChatGPT /api/auth/session JSON 响应、Codex auth.json、JSONL 文本，或者从下方拖入多账号 JSON 导出配置...
+      inputPlaceholder: `粘贴 ChatGPT Session、Codex auth.json、JSONL，或拖入多账号导出文件。
 
-例如：
+示例：
 {
   "access_token": "sample-access-token",
   "refresh_token": "sample-refresh-token",
   "session_token": "sample-session-token",
   "email": "user@example.com",
-  "name": "Example User",
   "chatgpt_account_id": "acct_example",
-  "chatgpt_user_id": "user_example",
   "plan_type": "plus",
-  "last_refresh": "2026-07-03T00:00:00.000Z",
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "输入格式",
       dropZoneAria: "选择或拖放 JSON、JSONL、ZIP 凭据文件或文件夹",
-      dropTitle: "选择或拖放 .json / .jsonl / .zip 凭据文件",
-      dropSub: "拖入文件或文件夹",
+      dropTitle: "导入凭据文件",
+      dropSub: ".json / .jsonl / .zip，支持文件夹拖入",
       chooseFile: "选择文件",
       chooseFolder: "选择文件夹",
       outputTitle: "数据输出",

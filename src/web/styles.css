@@ -519,10 +519,14 @@ select:focus {
 
 .shell {
   width: min(1480px, 100%);
+  height: calc(100vh - 80px);
   margin: 0 auto;
   padding: 0;
   position: relative;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Header section styling */
@@ -864,6 +868,8 @@ html[data-theme="dark"] .theme-tab.active {
   grid-template-columns: 0.88fr 1.12fr;
   gap: 20px;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .input-pane,
@@ -883,13 +889,14 @@ html[data-theme="dark"] .theme-tab.active {
   -webkit-backdrop-filter: blur(25px);
   box-shadow: var(--shadow);
   overflow: hidden;
+  min-height: 0;
 }
 
 .output-pane {
   padding: 0;
   gap: 14px;
-  height: calc(100vh - 140px);
-  max-height: calc(100vh - 140px);
+  height: auto;
+  max-height: none;
   min-height: 0;
   overflow: hidden;
 }
@@ -1074,37 +1081,52 @@ html[data-theme="light"] .text-mode-tab.active {
   position: relative;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--code-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--code-bg) 96%, var(--panel-strong)), var(--code-bg));
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+    0 10px 28px color-mix(in srgb, black 12%, transparent);
 }
 
 textarea {
   width: 100%;
+  flex: 1 1 auto;
   min-height: 480px;
   resize: vertical;
   background: transparent;
   color: var(--code-text);
-  padding: 16px;
+  padding: 20px 22px 16px;
   font-family: "Fira Code", SFMono-Regular, Consolas, Menlo, Monaco, monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.68;
   border: none;
   outline: none;
+}
+
+textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  font-size: 14px;
+  line-height: 1.76;
 }
 
 .editor-decor {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  min-height: 34px;
+  padding: 7px 14px;
   background: var(--code-decor-bg);
   border-top: 1px solid var(--code-decor-border);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .editor-status-left,
@@ -1166,11 +1188,17 @@ textarea:focus-within {
   justify-content: space-between;
   border: 2px dashed var(--line);
   border-radius: var(--radius-sm);
-  background: var(--panel-soft);
-  padding: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 88%, var(--panel-strong)), var(--panel-soft));
+  padding: 18px 18px;
   color: var(--muted);
   cursor: pointer;
-  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
 }
 
 .drop-zone:hover,
@@ -1179,6 +1207,9 @@ textarea:focus-within {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-strong);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent),
+    0 10px 24px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .cloud-icon {
@@ -1204,12 +1235,12 @@ textarea:focus-within {
 
 .drop-text strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .drop-text span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1223,9 +1254,9 @@ textarea:focus-within {
 .drop-file-button,
 .drop-folder-button {
   flex-shrink: 0;
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 11px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .drop-zone input[type="file"] {
@@ -1939,6 +1970,8 @@ html[data-theme="dark"] .editor-format-select {
 /* Responsiveness adjustments */
 @media (max-width: 1100px) {
   .shell {
+    height: auto;
+    min-height: 0;
     padding: 16px;
   }
 
@@ -1952,6 +1985,8 @@ html[data-theme="dark"] .editor-format-select {
   .workspace {
     grid-template-columns: 1fr;
     gap: 16px;
+    flex: initial;
+    min-height: 0;
   }
 
   .output-pane {

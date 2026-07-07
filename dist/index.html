@@ -526,10 +526,14 @@ select:focus {
 
 .shell {
   width: min(1480px, 100%);
+  height: calc(100vh - 80px);
   margin: 0 auto;
   padding: 0;
   position: relative;
   z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* Header section styling */
@@ -871,6 +875,8 @@ html[data-theme="dark"] .theme-tab.active {
   grid-template-columns: 0.88fr 1.12fr;
   gap: 20px;
   align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .input-pane,
@@ -890,13 +896,14 @@ html[data-theme="dark"] .theme-tab.active {
   -webkit-backdrop-filter: blur(25px);
   box-shadow: var(--shadow);
   overflow: hidden;
+  min-height: 0;
 }
 
 .output-pane {
   padding: 0;
   gap: 14px;
-  height: calc(100vh - 140px);
-  max-height: calc(100vh - 140px);
+  height: auto;
+  max-height: none;
   min-height: 0;
   overflow: hidden;
 }
@@ -1081,37 +1088,52 @@ html[data-theme="light"] .text-mode-tab.active {
   position: relative;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  background: var(--code-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--code-bg) 96%, var(--panel-strong)), var(--code-bg));
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 4%, transparent),
+    0 10px 28px color-mix(in srgb, black 12%, transparent);
 }
 
 textarea {
   width: 100%;
+  flex: 1 1 auto;
   min-height: 480px;
   resize: vertical;
   background: transparent;
   color: var(--code-text);
-  padding: 16px;
+  padding: 20px 22px 16px;
   font-family: "Fira Code", SFMono-Regular, Consolas, Menlo, Monaco, monospace;
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.68;
   border: none;
   outline: none;
+}
+
+textarea::placeholder {
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  font-size: 14px;
+  line-height: 1.76;
 }
 
 .editor-decor {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  min-height: 34px;
+  padding: 7px 14px;
   background: var(--code-decor-bg);
   border-top: 1px solid var(--code-decor-border);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .editor-status-left,
@@ -1173,11 +1195,17 @@ textarea:focus-within {
   justify-content: space-between;
   border: 2px dashed var(--line);
   border-radius: var(--radius-sm);
-  background: var(--panel-soft);
-  padding: 16px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 88%, var(--panel-strong)), var(--panel-soft));
+  padding: 18px 18px;
   color: var(--muted);
   cursor: pointer;
-  transition: all 0.2s ease;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
 }
 
 .drop-zone:hover,
@@ -1186,6 +1214,9 @@ textarea:focus-within {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent-strong);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 5%, transparent),
+    0 10px 24px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .cloud-icon {
@@ -1211,12 +1242,12 @@ textarea:focus-within {
 
 .drop-text strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .drop-text span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1230,9 +1261,9 @@ textarea:focus-within {
 .drop-file-button,
 .drop-folder-button {
   flex-shrink: 0;
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 11px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .drop-zone input[type="file"] {
@@ -1946,6 +1977,8 @@ html[data-theme="dark"] .editor-format-select {
 /* Responsiveness adjustments */
 @media (max-width: 1100px) {
   .shell {
+    height: auto;
+    min-height: 0;
     padding: 16px;
   }
 
@@ -1959,6 +1992,8 @@ html[data-theme="dark"] .editor-format-select {
   .workspace {
     grid-template-columns: 1fr;
     gap: 16px;
+    flex: initial;
+    min-height: 0;
   }
 
   .output-pane {
@@ -2255,25 +2290,22 @@ html[data-theme="dark"] .editor-format-select {
               id="jsonInput"
               aria-label="JSON credential input"
               spellcheck="false"
-              placeholder='Paste a ChatGPT /api/auth/session JSON response, Codex auth.json, JSONL text, or drop multi-account JSON exports below...
+              placeholder='粘贴 ChatGPT Session、Codex auth.json、JSONL，或拖入多账号导出文件。
 
-Example:
+示例：
 {
   "access_token": "sample-access-token",
   "refresh_token": "sample-refresh-token",
   "session_token": "sample-session-token",
   "email": "user@example.com",
-  "name": "Example User",
   "chatgpt_account_id": "acct_example",
-  "chatgpt_user_id": "user_example",
   "plan_type": "plus",
-  "last_refresh": "2026-07-03T00:00:00.000Z",
   "expires_at": "2026-07-03T01:00:00.000Z"
 }'
             ></textarea>
             <div class="editor-decor">
               <div class="decor-left editor-status-left">
-                <span>JSON Raw Input</span>
+                <span>JSON / JSONL</span>
                 <span id="inputFormatContainer" class="editor-format-container" hidden>
                   <span class="decor-separator">|</span>
                   <select id="inputFormatSelect" class="editor-format-select" aria-label="Input format"></select>
@@ -2288,8 +2320,8 @@ Example:
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
             </svg>
             <div class="drop-text">
-              <strong id="dropTitle">Choose or drop .json / .jsonl / .zip credential files</strong>
-              <span id="dropSub">Drop files or folders</span>
+              <strong id="dropTitle">导入凭据文件</strong>
+              <span id="dropSub">.json / .jsonl / .zip，支持文件夹拖入</span>
             </div>
             <div class="drop-actions">
               <button id="fileButton" type="button" class="btn btn-secondary btn-sm drop-file-button">Choose File</button>
@@ -2823,25 +2855,22 @@ Example:
         addDraftButton: "\u52A0\u5165\u5217\u8868",
         clearButton: "\u6E05\u7A7A",
         inputAria: "JSON \u51ED\u636E\u8F93\u5165",
-        inputPlaceholder: `\u8BF7\u5728\u6B64\u5904\u76F4\u63A5\u7C98\u8D34 ChatGPT /api/auth/session JSON \u54CD\u5E94\u3001Codex auth.json\u3001JSONL \u6587\u672C\uFF0C\u6216\u8005\u4ECE\u4E0B\u65B9\u62D6\u5165\u591A\u8D26\u53F7 JSON \u5BFC\u51FA\u914D\u7F6E...
+        inputPlaceholder: `\u7C98\u8D34 ChatGPT Session\u3001Codex auth.json\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
 
-\u4F8B\u5982\uFF1A
+\u793A\u4F8B\uFF1A
 {
   "access_token": "sample-access-token",
   "refresh_token": "sample-refresh-token",
   "session_token": "sample-session-token",
   "email": "user@example.com",
-  "name": "Example User",
   "chatgpt_account_id": "acct_example",
-  "chatgpt_user_id": "user_example",
   "plan_type": "plus",
-  "last_refresh": "2026-07-03T00:00:00.000Z",
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
         inputFormatAria: "\u8F93\u5165\u683C\u5F0F",
         dropZoneAria: "\u9009\u62E9\u6216\u62D6\u653E JSON\u3001JSONL\u3001ZIP \u51ED\u636E\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
-        dropTitle: "\u9009\u62E9\u6216\u62D6\u653E .json / .jsonl / .zip \u51ED\u636E\u6587\u4EF6",
-        dropSub: "\u62D6\u5165\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
+        dropTitle: "\u5BFC\u5165\u51ED\u636E\u6587\u4EF6",
+        dropSub: ".json / .jsonl / .zip\uFF0C\u652F\u6301\u6587\u4EF6\u5939\u62D6\u5165",
         chooseFile: "\u9009\u62E9\u6587\u4EF6",
         chooseFolder: "\u9009\u62E9\u6587\u4EF6\u5939",
         outputTitle: "\u6570\u636E\u8F93\u51FA",

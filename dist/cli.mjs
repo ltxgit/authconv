@@ -482,25 +482,22 @@ var MESSAGES = {
       addDraftButton: "\u52A0\u5165\u5217\u8868",
       clearButton: "\u6E05\u7A7A",
       inputAria: "JSON \u51ED\u636E\u8F93\u5165",
-      inputPlaceholder: `\u8BF7\u5728\u6B64\u5904\u76F4\u63A5\u7C98\u8D34 ChatGPT /api/auth/session JSON \u54CD\u5E94\u3001Codex auth.json\u3001JSONL \u6587\u672C\uFF0C\u6216\u8005\u4ECE\u4E0B\u65B9\u62D6\u5165\u591A\u8D26\u53F7 JSON \u5BFC\u51FA\u914D\u7F6E...
+      inputPlaceholder: `\u7C98\u8D34 ChatGPT Session\u3001Codex auth.json\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
 
-\u4F8B\u5982\uFF1A
+\u793A\u4F8B\uFF1A
 {
   "access_token": "sample-access-token",
   "refresh_token": "sample-refresh-token",
   "session_token": "sample-session-token",
   "email": "user@example.com",
-  "name": "Example User",
   "chatgpt_account_id": "acct_example",
-  "chatgpt_user_id": "user_example",
   "plan_type": "plus",
-  "last_refresh": "2026-07-03T00:00:00.000Z",
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "\u8F93\u5165\u683C\u5F0F",
       dropZoneAria: "\u9009\u62E9\u6216\u62D6\u653E JSON\u3001JSONL\u3001ZIP \u51ED\u636E\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
-      dropTitle: "\u9009\u62E9\u6216\u62D6\u653E .json / .jsonl / .zip \u51ED\u636E\u6587\u4EF6",
-      dropSub: "\u62D6\u5165\u6587\u4EF6\u6216\u6587\u4EF6\u5939",
+      dropTitle: "\u5BFC\u5165\u51ED\u636E\u6587\u4EF6",
+      dropSub: ".json / .jsonl / .zip\uFF0C\u652F\u6301\u6587\u4EF6\u5939\u62D6\u5165",
       chooseFile: "\u9009\u62E9\u6587\u4EF6",
       chooseFolder: "\u9009\u62E9\u6587\u4EF6\u5939",
       outputTitle: "\u6570\u636E\u8F93\u51FA",
