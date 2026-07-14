@@ -1,0 +1,15 @@
+{
+  "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+    "key": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsInN1YiI6InhhaS1maXh0dXJlLXVzZXIiLCJjbGllbnRfaWQiOiJiMWEwMDQ5Mi0wNzNhLTQ3ZWEtODE2Zi00YzMyOTI2NGE4MjgiLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIG9mZmxpbmVfYWNjZXNzIGdyb2stY2xpOmFjY2VzcyBhcGk6YWNjZXNzIiwiaWF0IjoxNzgzNzg5MjE4LCJleHAiOjE3ODM4MTA4MTh9.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+    "auth_mode": "oidc",
+    "create_time": "2026-07-11T17:00:18.000Z",
+    "user_id": "xai-fixture-user",
+    "email": "grok-fixture@example.com",
+    "principal_type": "User",
+    "principal_id": "xai-fixture-user",
+    "refresh_token": "xai-fixture-refresh-token",
+    "expires_at": "2026-07-11T23:00:18.000Z",
+    "oidc_issuer": "https://auth.x.ai",
+    "oidc_client_id": "b1a00492-073a-47ea-816f-4c329264a828"
+  }
+}

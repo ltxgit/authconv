@@ -40,6 +40,7 @@ export const INPUT_FORMAT_LABELS: Record<Locale, Record<InputFormat, string>> = 
     session: "ChatGPT Session",
     sub2api: "sub2api",
     cpa: "CPA",
+    grok: "Grok / xAI",
     codexmanager: "Codex Manager",
     codex2api: "Codex2Api",
     codex: "Codex Auth",
@@ -49,6 +50,7 @@ export const INPUT_FORMAT_LABELS: Record<Locale, Record<InputFormat, string>> = 
     session: "ChatGPT Session",
     sub2api: "sub2api",
     cpa: "CPA",
+    grok: "Grok / xAI",
     codexmanager: "Codex Manager",
     codex2api: "Codex2Api",
     codex: "Codex Auth",
@@ -60,6 +62,7 @@ export const INPUT_FORMAT_BADGE_LABELS: Record<InputFormat, string> = {
   session: "Session",
   sub2api: "sub2api",
   cpa: "CPA",
+  grok: "Grok / xAI",
   codexmanager: "Codex Manager",
   codex2api: "Codex2Api",
   codex: "Codex Auth",
@@ -72,6 +75,7 @@ export const FORMAT_LABELS: Record<OutputFormat, string> = {
   codex2api: "codex2api",
   codexmanager: "Codex Manager",
   codex: "Codex Auth",
+  grok: "Grok CLI",
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
@@ -83,6 +87,7 @@ type CliMessages = {
   inputPathSource: string;
   errors: {
     noAccounts: string;
+    noApplicableFormats: string;
     cwdMissing: string;
     unknownArg: (arg: string) => string;
     missingInput: string;
@@ -129,10 +134,6 @@ type NormalizeMessages = {
   invalidInputFormat: (sourceName: string, inputFormat: string) => string;
   noTokens: (sourceName: string) => string;
   invalidExpiry: (sourceName: string, value: string) => string;
-  syntheticIdToken: (sourceName: string) => string;
-  missingIdToken: (sourceName: string) => string;
-  missingRefreshToken: (sourceName: string) => string;
-  missingAccessToken: (sourceName: string) => string;
   claimOverride: (sourceName: string, fields: string[]) => string;
   claimSanity: (sourceName: string, fields: string[]) => string;
 };
@@ -170,12 +171,14 @@ type WebMessages = {
   outputOptions: string;
   jsonlFormat: string;
   fakeId: string;
+  refreshToken: string;
   accountTitle: string;
   clearAccounts: string;
   accountColumns: [string, string, string, string];
   accountListAria: string;
   previewAria: string;
   previewTabsAria: string;
+  jwtHoverAria: string;
   copyPreview: string;
   copied: string;
   copyToast: string;
@@ -211,6 +214,7 @@ type WebMessages = {
   removeAccount: (label: string) => string;
   jsonlTooltip: string;
   fakeIdTooltip: string;
+  refreshTokenTooltip: string;
   codexManagerTooltip: string;
   codexTooltip: string;
   modeSingle: string;
@@ -251,13 +255,14 @@ export const MESSAGES: Record<Locale, Messages> = {
   <path...>              输入 JSON/JSONL/ZIP 文件或目录路径，可传多个
   -i, --input <path>     指定 JSON/JSONL/ZIP 文件或目录（可重复）
   --stdin                从标准输入读取（与 -i 互斥）
-  -f, --format <list>    输出格式，支持逗号分隔或重复传入；可用 cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api 输出方式：merged 或 single
+  -f, --format <list>    输出格式，支持逗号分隔或重复传入；可用 cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok 输出方式：merged 或 single
   -o, --out-dir <path>   输出目录，默认 output
   --jsonl                输出 JSONL 格式（每账号一行）
   --zip                  写入一个 ZIP 文件，压缩包内保留当前输出目录结构
   --stdout               单格式单文件输出到 stdout
   --no-fake-id           输出不包含合成 id_token（默认会输出）
+  --no-refresh-token     输出不包含 refresh_token（默认会输出）
   --lang <zh|en>         人类可读输出语言，未检测到时默认英文
   --inspect              只打印账号摘要，不产出文件
   --dry-run              只打印写入计划，不实际写盘
@@ -270,12 +275,13 @@ export const MESSAGES: Record<Locale, Messages> = {
       inputPathSource: "输入路径",
       errors: {
         noAccounts: "未找到可转换账号",
+        noApplicableFormats: "所选格式不适用于已识别账号，未生成任何文件",
         cwdMissing: "当前目录不存在",
         unknownArg: (arg) => `未知参数: ${arg}`,
         missingInput: "未指定输入（需要 <path>、-i 或 --stdin）",
         invalidModeSyntax: (value) => `--mode 格式错误: ${value}（应为 format=merged|single）`,
         unknownOutputFormat: (format) => `未知输出格式: ${format}`,
-        unsupportedModeFormat: (format) => `--mode 仅支持 sub2api 或 codex2api: ${format}`,
+        unsupportedModeFormat: (format) => `--mode 仅支持 sub2api、codex2api 或 grok: ${format}`,
         unknownOutputMode: (mode) => `--mode 包含未知输出方式: ${mode}`,
         stdinConflict: (source) => `${source} 与 --stdin 冲突，只能指定一个输入来源`,
         stdinPathConflict: "--stdin 与已有输入路径冲突，只能指定一个输入来源",
@@ -315,16 +321,12 @@ export const MESSAGES: Record<Locale, Messages> = {
       invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: 输入不符合 ${inputFormat} 输入格式`,
       noTokens: (sourceName) => `${sourceName}: 未找到可识别 token 字段`,
       invalidExpiry: (sourceName, value) => `${sourceName}: 过期时间格式错误 ("${value}")`,
-      syntheticIdToken: (sourceName) => `${sourceName}: 已生成合成 id_token`,
-      missingIdToken: (sourceName) => `${sourceName}: 缺少 id_token`,
-      missingRefreshToken: (sourceName) => `${sourceName}: 缺少 refresh_token`,
-      missingAccessToken: (sourceName) => `${sourceName}: 缺少 access_token`,
       claimOverride: (sourceName, fields) => `${sourceName}: access_token claim 不一致，覆盖字段: ${fields.join(",")}`,
       claimSanity: (sourceName, fields) => `${sourceName}: JWT claim 校验异常: ${fields.join(",")}`,
     },
     web: {
-      pageTitle: "GPT Auth 转换 | 纯本地安全凭据多格式处理工具",
-      appTitle: "GPT Auth 转换",
+      pageTitle: "Auth Converter | OpenAI / Grok OAuth 凭证转换工具",
+      appTitle: "Auth Converter",
       notice: "纯本地安全转换，所有运算在当前浏览器中完成。",
       dragTitle: "释放以导入 JSON / JSONL / ZIP 凭据",
       dragSub: "松开添加到列表",
@@ -340,7 +342,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       addDraftButton: "加入列表",
       clearButton: "清空",
       inputAria: "JSON 凭据输入",
-      inputPlaceholder: `粘贴 ChatGPT Session、Codex auth.json、JSONL，或拖入多账号导出文件。
+      inputPlaceholder: `粘贴 OpenAI / Grok OAuth JSON、JSONL，或拖入多账号导出文件。
 
 示例：
 {
@@ -366,12 +368,14 @@ export const MESSAGES: Record<Locale, Messages> = {
       outputOptions: "输出选项",
       jsonlFormat: "JSONL 格式",
       fakeId: "合成 id_token",
+      refreshToken: "包含 refresh_token",
       accountTitle: "已加载账号",
       clearAccounts: "清空列表",
-      accountColumns: ["账号标识 (Email / ID)", "套餐状态", "过期时间", "操作"],
+      accountColumns: ["账号标识 (Email / ID)", "平台 / 套餐", "过期时间", "操作"],
       accountListAria: "账号列表",
       previewAria: "输出预览",
       previewTabsAria: "预览格式选择",
+      jwtHoverAria: "悬停或聚焦以预览 JWT 内容",
       copyPreview: "复制当前预览",
       copied: "✓ 已复制到剪贴板",
       copyToast: "已复制到剪贴板",
@@ -411,6 +415,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       removeAccount: (label) => `删除 ${label}`,
       jsonlTooltip: "JSONL：行式 JSON 格式，每行一个账号（适合单行凭据导入等场景）。",
       fakeIdTooltip: "合成 id_token：针对缺少 id_token 的账号自动合成模拟凭据，以兼容 Codex Auth 等下游工具。",
+      refreshTokenTooltip: "取消后，所有输出都会省略 refresh_token；凭证过期后将无法自动续期。",
       codexManagerTooltip: "Codex-Manager 格式。",
       codexTooltip: "Codex auth.json 格式，可导入 Codex CLI、Cockpit 和 AxonHub 等兼容该格式的项目。",
       modeSingle: "单个",
@@ -444,13 +449,14 @@ Options:
   <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
   -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
   --stdin                Read from standard input; conflicts with paths
-  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
+  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok output mode: merged or single
   -o, --out-dir <path>   Output directory, default output
   --jsonl                Output JSONL text, one JSON document per line
   --zip                  Write one ZIP file and keep the current output tree inside it
   --stdout               Write a single output file to stdout
   --no-fake-id           Omit synthetic id_token from output (included by default)
+  --no-refresh-token     Omit refresh_token from output (included by default)
   --lang <zh|en>         Human-readable output language, default en when undetected
   --inspect              Print account summary only
   --dry-run              Print write plan without writing files
@@ -463,12 +469,13 @@ Options:
       inputPathSource: "input path",
       errors: {
         noAccounts: "No convertible accounts found",
+        noApplicableFormats: "The selected formats do not apply to the recognized accounts; no files were generated",
         cwdMissing: "Current directory no longer exists",
         unknownArg: (arg) => `Unknown argument: ${arg}`,
         missingInput: "No input specified; pass <path>, -i, or --stdin",
         invalidModeSyntax: (value) => `Invalid --mode: ${value} (expected format=merged|single)`,
         unknownOutputFormat: (format) => `Unknown output format: ${format}`,
-        unsupportedModeFormat: (format) => `--mode only supports sub2api or codex2api: ${format}`,
+        unsupportedModeFormat: (format) => `--mode only supports sub2api, codex2api, or grok: ${format}`,
         unknownOutputMode: (mode) => `Unknown output mode in --mode: ${mode}`,
         stdinConflict: (source) => `${source} conflicts with --stdin; choose one input source`,
         stdinPathConflict: "--stdin conflicts with input paths; choose one input source",
@@ -508,16 +515,12 @@ Options:
       invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: input is not ${inputFormat}`,
       noTokens: (sourceName) => `${sourceName}: no recognizable token fields found`,
       invalidExpiry: (sourceName, value) => `${sourceName}: invalid expiry time ("${value}")`,
-      syntheticIdToken: (sourceName) => `${sourceName}: generated synthetic id_token`,
-      missingIdToken: (sourceName) => `${sourceName}: missing id_token`,
-      missingRefreshToken: (sourceName) => `${sourceName}: missing refresh_token`,
-      missingAccessToken: (sourceName) => `${sourceName}: missing access_token`,
       claimOverride: (sourceName, fields) => `${sourceName}: access_token claim mismatch, overwritten fields: ${fields.join(",")}`,
       claimSanity: (sourceName, fields) => `${sourceName}: invalid JWT claims: ${fields.join(",")}`,
     },
     web: {
-      pageTitle: "GPT Auth Converter | Local credential format converter",
-      appTitle: "GPT Auth Converter",
+      pageTitle: "Auth Converter | Local OpenAI / Grok OAuth credential converter",
+      appTitle: "Auth Converter",
       notice: "Local-only conversion. Everything runs in this browser.",
       dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
       dragSub: "Release to add to the list",
@@ -533,7 +536,7 @@ Options:
       addDraftButton: "Add to List",
       clearButton: "Clear",
       inputAria: "JSON credential input",
-      inputPlaceholder: `Paste a ChatGPT /api/auth/session JSON response, Codex auth.json, JSONL text, or drop multi-account JSON exports below...
+      inputPlaceholder: `Paste OpenAI / Grok OAuth JSON, JSONL text, or drop multi-account exports below...
 
 Example:
 {
@@ -562,12 +565,14 @@ Example:
       outputOptions: "Options",
       jsonlFormat: "JSONL Format",
       fakeId: "Synthetic id_token",
+      refreshToken: "Include refresh_token",
       accountTitle: "Loaded Accounts",
       clearAccounts: "Clear List",
-      accountColumns: ["Account (Email / ID)", "Plan", "Expires At", "Action"],
+      accountColumns: ["Account (Email / ID)", "Platform / Plan", "Expires At", "Action"],
       accountListAria: "Account list",
       previewAria: "Output preview",
       previewTabsAria: "Preview format selection",
+      jwtHoverAria: "Hover or focus to preview JWT contents",
       copyPreview: "Copy Preview",
       copied: "✓ Copied",
       copyToast: "Copied to clipboard",
@@ -607,6 +612,7 @@ Example:
       removeAccount: (label) => `Remove ${label}`,
       jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
       fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
+      refreshTokenTooltip: "When disabled, every output omits refresh_token and credentials cannot refresh automatically after expiry.",
       codexManagerTooltip: "Codex-Manager format.",
       codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
       modeSingle: "Single",

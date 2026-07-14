@@ -1,13 +1,14 @@
 # authconv
 
-ChatGPT / Codex OAuth 凭证格式转换工具。
+OpenAI / Grok OAuth 凭证格式转换工具。
 
-把 ChatGPT `/api/auth/session` 响应、Codex `auth.json`、sub2api 导出、或散装 token JSON 归一化后，渲染成目标工具所需的格式（CPA / sub2api / codex2api / Codex-Manager / Codex auth.json）。
+把 ChatGPT `/api/auth/session`、Codex `auth.json`、xAI OIDC、Grok CLI `auth.json`、CPA、sub2api 或散装 token JSON 归一化后，渲染成目标工具所需格式。
 
 转换、解析、导出均在本地完成，不上传凭据；Web 版的“获取 Session”按钮只会按用户点击打开 ChatGPT 官方 session 页面。
 
 
-- ✅ **多格式导出** — 目前支持 CPA、sub2api、codex2api、Codex-Manager 和 Codex CLI auth.json互转。
+- ✅ **OpenAI / Grok** — 自动识别平台，支持混合账号批量转换。
+- ✅ **多格式导出** — 支持 CPA、sub2api、codex2api、Codex-Manager、Codex CLI auth.json 和 Grok CLI auth.json。
 - ✅ **纯本地转换，零上传** — CLI 不发起网络请求；Web 版转换、解析、导出完全本地运行。
 - ✅ **Web 版无需安装** — 直接访问 [https://ltxgit.github.io/authconv/](https://ltxgit.github.io/authconv/) 或者点击项目内 `dist/index.html` 本地打开。
 
@@ -27,7 +28,7 @@ ChatGPT / Codex OAuth 凭证格式转换工具。
 - 拖拽 JSON / JSONL / ZIP 文件或文件夹，或粘贴 JSON / JSONL 文本；支持的浏览器也可直接选择文件夹
 - 支持多格式导出，sub2api / codex2api 可选聚合或单账号模式
 - JSONL 单行输出
-- 账号列表预览、输出预览、复制、JSON / ZIP 下载
+- 账号列表预览、输出 JSON 中 JWT 密文的悬停解码预览、复制、JSON / ZIP 下载
 - 输入格式可自动识别，也可手动指定
 - 页面支持中文 / English 切换，选择会写入 URL 方便刷新保留
 - 支持跟随系统的明暗主题
@@ -80,6 +81,7 @@ npm unlink -g authconv
 - `codex2api` — codex2api（默认聚合）
 - `codexmanager` — Codex-Manager
 - `codex` — Codex CLI auth.json
+- `grok` — Grok CLI auth.json
 
 常用命令：
 
@@ -144,6 +146,10 @@ authconv a.json b.json accounts/ -f cpa
 # 每账号单独一个文件
 authconv accounts/ -f sub2api --mode sub2api=single
 
+# Grok CLI 多账号合并（默认）或拆分
+authconv grok-accounts/ -f grok
+authconv grok-accounts/ -f grok --mode grok=single
+
 # 合并为一个文件（默认）
 authconv accounts/ -f sub2api
 
@@ -177,6 +183,14 @@ authconv creds.json --lang en --inspect
 ```
 
 完整 CLI 参考见 [docs/cli.md](docs/cli.md)。
+
+---
+
+## 规则文档
+
+- [通用转换规则](docs/conversion-rules.md)
+- [OpenAI / ChatGPT 凭证规则](docs/openai-provider.md)
+- [Grok / xAI 凭证规则](docs/grok-provider.md)
 
 ---
 

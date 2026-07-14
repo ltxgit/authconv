@@ -4,6 +4,7 @@ import path from "node:path";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import { runCli, startWebUiServer } from "../src/cli.js";
+import { fakeJwt } from "./helpers.js";
 
 async function readJsonFile<T>(filePath: string): Promise<T> {
   return JSON.parse(await readFile(filePath, "utf8")) as T;
@@ -21,7 +22,168 @@ async function modeBits(filePath: string): Promise<number> {
   return (await stat(filePath)).mode & 0o777;
 }
 
+function openAiCredential(fields: Record<string, unknown>): Record<string, unknown> {
+  return { type: "codex", ...fields };
+}
+
 describe("authconv CLI", () => {
+  it("converts an xAI OIDC bundle to every applicable format by default", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-grok-"));
+    try {
+      const input = path.join(dir, "oidc.json");
+      const outDir = path.join(dir, "output");
+      await writeFile(input, JSON.stringify({
+        access_token: fakeJwt({
+          iss: "https://auth.x.ai",
+          aud: "b1a00492-073a-47ea-816f-4c329264a828",
+          sub: "xai-user-1",
+          client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+          iat: 1783789218,
+          exp: 1783810818,
+        }),
+        refresh_token: "xai-refresh-token",
+        id_token: fakeJwt({
+          iss: "https://auth.x.ai",
+          sub: "xai-user-1",
+          email: "grok@example.com",
+        }),
+        token_type: "Bearer",
+        expires_in: 21600,
+        device_response: { device_code: "must-not-leak" },
+      }));
+
+      const result = await runCli([input, "-o", outDir], { stdout: "", stderr: "" });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain("CPA/sub2api/Grok CLI");
+      expect(result.stderr).not.toContain("codex2api");
+      expect(result.stderr).not.toContain("Codex Manager");
+      expect(result.stderr).not.toContain("Codex Auth");
+      expect((await readdir(outDir)).sort()).toEqual(["cpa", "grok", "sub2api"]);
+      const cpa = await readJsonFile<Record<string, unknown>>(path.join(outDir, "cpa", "cpa_grok_example.com_xai-user-1.json"));
+      expect(cpa).toMatchObject({ type: "xai", email: "grok@example.com", sub: "xai-user-1" });
+      const grokFiles = await readdir(path.join(outDir, "grok"));
+      const grok = await readJsonFile<Record<string, unknown>>(path.join(outDir, "grok", grokFiles[0]));
+      expect(Object.keys(grok)).toEqual(["https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828"]);
+      expect(JSON.stringify(grok)).not.toContain("must-not-leak");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows an expired xAI credential without warning", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-expired-grok-"));
+    try {
+      const input = path.join(dir, "oidc.json");
+      await writeFile(input, JSON.stringify({
+        access_token: fakeJwt({
+          iss: "https://auth.x.ai",
+          aud: "b1a00492-073a-47ea-816f-4c329264a828",
+          client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+          sub: "xai-user-1",
+          iat: 1,
+          exp: 2,
+        }),
+        refresh_token: "xai-refresh-token",
+      }));
+
+      const result = await runCli([input, "--inspect", "--lang", "zh"], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain("warning:");
+      expect(result.stderr).not.toContain("凭证已过期");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns non-zero and writes nothing when every selected format is inapplicable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-no-output-"));
+    try {
+      const input = path.join(dir, "xai.json");
+      const outDir = path.join(dir, "output");
+      await writeFile(input, JSON.stringify({
+        type: "xai",
+        access_token: "xai-access",
+        refresh_token: "xai-refresh",
+        sub: "xai-user",
+      }));
+
+      const result = await runCli([input, "-f", "codex", "-o", outDir], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(1);
+      await expect(stat(outDir)).rejects.toThrow();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses only exportable accounts in ZIP dry-run counts", async () => {
+    const result = await runCli(["--stdin", "-f", "cpa", "--zip", "--dry-run", "--lang", "en"], {
+      stdin: JSON.stringify([
+        { type: "xai", access_token: "xai-access", sub: "xai-user" },
+        { access_token: "opaque-unknown" },
+      ]),
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toContain("Found 1 account, would write 1 file");
+    expect(result.stderr).toContain("(1 account)");
+    expect(result.stderr).not.toContain("2 accounts");
+  });
+
+  it("writes valid accounts but returns non-zero when another input is rejected", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-partial-"));
+    try {
+      const validInput = path.join(dir, "valid.json");
+      const rejectedInput = path.join(dir, "rejected.json");
+      const outDir = path.join(dir, "output");
+      await writeFile(validInput, JSON.stringify({
+        type: "xai",
+        access_token: fakeJwt({
+          iss: "https://auth.x.ai",
+          client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+          sub: "valid-xai-user",
+          exp: 4102444800,
+        }),
+        refresh_token: "valid-refresh-token",
+        email: "valid@example.com",
+      }));
+      await writeFile(rejectedInput, JSON.stringify({
+        type: "xai",
+        access_token: fakeJwt({
+          iss: "https://auth.openai.com",
+          aud: "https://api.openai.com/v1",
+          exp: 4102444800,
+        }),
+        refresh_token: "rejected-refresh-token",
+      }));
+
+      const result = await runCli([validInput, rejectedInput, "-f", "cpa", "-o", outDir, "--lang", "zh"], {
+        stdout: "",
+        stderr: "",
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain("平台冲突");
+      expect(await readdir(outDir)).toEqual(["cpa_valid_example.com_valid-xai-us.json"]);
+      expect(await readJsonFile(path.join(outDir, "cpa_valid_example.com_valid-xai-us.json"))).toMatchObject({
+        type: "xai",
+        email: "valid@example.com",
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("prints help to stderr so stdout stays reserved for JSON", async () => {
     const result = await runCli(["--help"], {
       stdout: "",
@@ -147,7 +309,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const result = await runCli(["-i", input, "--out-dir", outDir], {
         stdout: "",
@@ -198,7 +360,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const result = await runCli([input, "--format", "cpa", "--out-dir", outDir], {
         stdout: "",
@@ -232,7 +394,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const jsonResult = await runCli([input, "-f", "cpa", "-o", outDir], {
         stdout: "",
@@ -266,8 +428,8 @@ describe("authconv CLI", () => {
       const inputDir = path.join(dir, "accounts");
       const outDir = path.join(dir, "output");
       await mkdir(inputDir);
-      await writeFile(firstInput, JSON.stringify({ access_token: "access-token-a", email: "first@example.com" }));
-      await writeFile(path.join(inputDir, "second.json"), JSON.stringify({ access_token: "access-token-b", email: "second@example.com" }));
+      await writeFile(firstInput, JSON.stringify(openAiCredential({ access_token: "access-token-a", email: "first@example.com" })));
+      await writeFile(path.join(inputDir, "second.json"), JSON.stringify(openAiCredential({ access_token: "access-token-b", email: "second@example.com" })));
 
       const result = await runCli([firstInput, inputDir, "-f", "cpa", "--jsonl", "--out-dir", outDir], {
         stdout: "",
@@ -289,8 +451,8 @@ describe("authconv CLI", () => {
       const firstInput = path.join(dir, "first.json");
       const secondInput = path.join(dir, "second.json");
       const outDir = path.join(dir, "output");
-      await writeFile(firstInput, JSON.stringify({ access_token: "access-token-a", email: "first@example.com" }));
-      await writeFile(secondInput, JSON.stringify({ access_token: "access-token-b", email: "second@example.com" }));
+      await writeFile(firstInput, JSON.stringify(openAiCredential({ access_token: "access-token-a", email: "first@example.com" })));
+      await writeFile(secondInput, JSON.stringify(openAiCredential({ access_token: "access-token-b", email: "second@example.com" })));
 
       const result = await runCli(["-i", firstInput, "--input", secondInput, "-f", "cpa", "--jsonl", "--out-dir", outDir], {
         stdout: "",
@@ -311,8 +473,8 @@ describe("authconv CLI", () => {
       const input = path.join(dir, "bundle.zip");
       const outDir = path.join(dir, "output");
       await writeFile(input, zipSync({
-        "first.json": strToU8(JSON.stringify({ access_token: "access-token-a", email: "first@example.com" })),
-        "nested/second.jsonl": strToU8(`${JSON.stringify({ access_token: "access-token-b", email: "second@example.com" })}\n`),
+        "first.json": strToU8(JSON.stringify(openAiCredential({ access_token: "access-token-a", email: "first@example.com" }))),
+        "nested/second.jsonl": strToU8(`${JSON.stringify(openAiCredential({ access_token: "access-token-b", email: "second@example.com" }))}\n`),
         "notes.txt": strToU8("ignore"),
       }));
 
@@ -388,6 +550,7 @@ describe("authconv CLI", () => {
           version: 1,
           accounts: [
             {
+              platform: "openai",
               name: "First Account",
               credentials: {
                 access_token: "access-token-a",
@@ -395,6 +558,7 @@ describe("authconv CLI", () => {
               },
             },
             {
+              platform: "openai",
               name: "Second Account",
               credentials: {
                 access_token: "access-token-b",
@@ -473,7 +637,7 @@ describe("authconv CLI", () => {
 
   it("rejects --stdout with multiple formats", async () => {
     const result = await runCli(["--stdin", "-f", "cpa,sub2api", "--stdout"], {
-      stdin: JSON.stringify({ access_token: "access-token" }),
+      stdin: JSON.stringify(openAiCredential({ access_token: "access-token" })),
       stdout: "",
       stderr: "",
     });
@@ -482,14 +646,14 @@ describe("authconv CLI", () => {
     expect(result.stdout).toBe("");
   });
 
-  it("groups repeated warnings by warning count instead of listing files", async () => {
+  it("does not warn when optional credential fields are absent", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "authconv-cli-warning-group-"));
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
       await writeFile(input, JSON.stringify([
-        { access_token: "access-a", email: "first@example.com" },
-        { access_token: "access-b", email: "second@example.com" },
+        openAiCredential({ access_token: "access-a", email: "first@example.com" }),
+        openAiCredential({ access_token: "access-b", email: "second@example.com" }),
       ]));
 
       const result = await runCli([input, "-f", "cpa", "--jsonl", "-o", outDir, "--lang", "en"], {
@@ -498,9 +662,8 @@ describe("authconv CLI", () => {
       });
 
       expect(result.exitCode).toBe(0);
-      expect(result.stderr).toContain("missing refresh_token (2 warnings)");
-      expect(result.stderr).not.toContain("(2 files)");
-      expect(result.stderr).not.toContain("input.json,");
+      expect(result.stderr).not.toContain("warning:");
+      expect(result.stderr).not.toContain("missing refresh_token");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -511,7 +674,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const result = await runCli([input, "-f", "cpa,sub2api", "--zip", "--out-dir", outDir], {
         stdout: "",
@@ -555,7 +718,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const result = await runCli(["-i", input, "-f", "cpa,sub2api", "--format", "codexmanager", "--out-dir", outDir], {
         stdout: "",
@@ -620,7 +783,7 @@ describe("authconv CLI", () => {
 
   it("prints one JSON document for single-format stdout", async () => {
     const result = await runCli(["--stdin", "--format", "cpa", "--stdout"], {
-      stdin: JSON.stringify({ access_token: "access-token", email: "user@example.com" }),
+      stdin: JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })),
       stdout: "",
       stderr: "",
     });
@@ -643,7 +806,7 @@ describe("authconv CLI", () => {
 
   it("writes synthetic id_token with a placeholder signature by default", async () => {
     const result = await runCli(["--stdin", "--format", "codex", "--stdout"], {
-      stdin: JSON.stringify({ access_token: "access-token", email: "user@example.com" }),
+      stdin: JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })),
       stdout: "",
       stderr: "",
     });
@@ -656,7 +819,7 @@ describe("authconv CLI", () => {
 
   it("does not write synthetic id_token when --no-fake-id is set", async () => {
     const result = await runCli(["--stdin", "--format", "codex", "--stdout", "--no-fake-id"], {
-      stdin: JSON.stringify({ access_token: "access-token", email: "user@example.com" }),
+      stdin: JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })),
       stdout: "",
       stderr: "",
     });
@@ -664,6 +827,21 @@ describe("authconv CLI", () => {
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout) as { tokens: { id_token: string } };
     expect(output.tokens.id_token).toBe("");
+  });
+
+  it("omits refresh_token from output when --no-refresh-token is set", async () => {
+    const result = await runCli(["--stdin", "--format", "codex", "--stdout", "--no-refresh-token"], {
+      stdin: JSON.stringify(openAiCredential({
+        access_token: "access-token",
+        refresh_token: "refresh-token",
+        email: "user@example.com",
+      })),
+      stdout: "",
+      stderr: "",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).tokens).not.toHaveProperty("refresh_token");
   });
 
   it("prints Codex auth.json for the codex output format", async () => {
@@ -695,7 +873,7 @@ describe("authconv CLI", () => {
 
   it("accepts --stdin as an explicit input source", async () => {
     const result = await runCli(["--stdin", "--format", "cpa", "--stdout"], {
-      stdin: JSON.stringify({ access_token: "access-token", email: "stdin@example.com" }),
+      stdin: JSON.stringify(openAiCredential({ access_token: "access-token", email: "stdin@example.com" })),
       stdout: "",
       stderr: "",
     });
@@ -726,8 +904,8 @@ describe("authconv CLI", () => {
       await writeFile(
         input,
         JSON.stringify([
-          { access_token: "access-token-a", email: "first@example.com" },
-          { access_token: "access-token-b", email: "second@example.com" },
+          openAiCredential({ access_token: "access-token-a", email: "first@example.com" }),
+          openAiCredential({ access_token: "access-token-b", email: "second@example.com" }),
         ]),
       );
 
@@ -756,8 +934,8 @@ describe("authconv CLI", () => {
       await writeFile(
         input,
         JSON.stringify([
-          { access_token: "access-token-a", email: "first@example.com" },
-          { access_token: "access-token-b", email: "second@example.com" },
+          openAiCredential({ access_token: "access-token-a", email: "first@example.com" }),
+          openAiCredential({ access_token: "access-token-b", email: "second@example.com" }),
         ]),
       );
 
@@ -787,8 +965,8 @@ describe("authconv CLI", () => {
   it("prints JSONL to stdout when serialization leaves one output file", async () => {
     const result = await runCli(["--stdin", "--format", "cpa", "--stdout", "--jsonl"], {
       stdin: JSON.stringify([
-        { access_token: "access-token-a", email: "first@example.com" },
-        { access_token: "access-token-b", email: "second@example.com" },
+        openAiCredential({ access_token: "access-token-a", email: "first@example.com" }),
+        openAiCredential({ access_token: "access-token-b", email: "second@example.com" }),
       ]),
       stdout: "",
       stderr: "",
@@ -805,8 +983,8 @@ describe("authconv CLI", () => {
   it("accepts JSONL as input text", async () => {
     const result = await runCli(["--stdin", "--format", "cpa", "--stdout", "--jsonl"], {
       stdin: [
-        JSON.stringify({ access_token: "access-token-a", email: "first@example.com" }),
-        JSON.stringify({ access_token: "access-token-b", email: "second@example.com" }),
+        JSON.stringify(openAiCredential({ access_token: "access-token-a", email: "first@example.com" })),
+        JSON.stringify(openAiCredential({ access_token: "access-token-b", email: "second@example.com" })),
       ].join("\n"),
       stdout: "",
       stderr: "",
@@ -829,8 +1007,8 @@ describe("authconv CLI", () => {
       await writeFile(
         path.join(inputDir, "accounts.jsonl"),
         [
-          JSON.stringify({ access_token: "access-token-a", email: "first@example.com" }),
-          JSON.stringify({ access_token: "access-token-b", email: "second@example.com" }),
+          JSON.stringify(openAiCredential({ access_token: "access-token-a", email: "first@example.com" })),
+          JSON.stringify(openAiCredential({ access_token: "access-token-b", email: "second@example.com" })),
         ].join("\n"),
       );
 
@@ -855,8 +1033,8 @@ describe("authconv CLI", () => {
       await writeFile(
         input,
         JSON.stringify([
-          { access_token: "access-token-a", email: "first@example.com" },
-          { access_token: "access-token-b", email: "second@example.com" },
+          openAiCredential({ access_token: "access-token-a", email: "first@example.com" }),
+          openAiCredential({ access_token: "access-token-b", email: "second@example.com" }),
         ]),
       );
 
@@ -948,7 +1126,7 @@ describe("authconv CLI", () => {
     try {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
 
       const result = await runCli([input, "-f", "cpa", "-o", outDir, "--dry-run"], {
         stdout: "",
@@ -970,7 +1148,7 @@ describe("authconv CLI", () => {
       const input = path.join(dir, "input.json");
       const outDir = path.join(dir, "output");
       const output = path.join(outDir, "cpa_user_example.com.json");
-      await writeFile(input, JSON.stringify({ access_token: "access-token", email: "user@example.com" }));
+      await writeFile(input, JSON.stringify(openAiCredential({ access_token: "access-token", email: "user@example.com" })));
       await mkdir(outDir, { recursive: true });
       await writeFile(output, "existing", "utf8");
 

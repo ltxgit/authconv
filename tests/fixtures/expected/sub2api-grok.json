@@ -1,0 +1,28 @@
+{
+  "type": "sub2api-data",
+  "version": 1,
+  "exported_at": "2026-07-12T00:00:00.000Z",
+  "proxies": [],
+  "accounts": [
+    {
+      "name": "grok-fixture@example.com",
+      "platform": "grok",
+      "type": "oauth",
+      "credentials": {
+        "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsInN1YiI6InhhaS1maXh0dXJlLXVzZXIiLCJjbGllbnRfaWQiOiJiMWEwMDQ5Mi0wNzNhLTQ3ZWEtODE2Zi00YzMyOTI2NGE4MjgiLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIG9mZmxpbmVfYWNjZXNzIGdyb2stY2xpOmFjY2VzcyBhcGk6YWNjZXNzIiwiaWF0IjoxNzgzNzg5MjE4LCJleHAiOjE3ODM4MTA4MTh9.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+        "refresh_token": "xai-fixture-refresh-token",
+        "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsInN1YiI6InhhaS1maXh0dXJlLXVzZXIiLCJlbWFpbCI6Imdyb2stZml4dHVyZUBleGFtcGxlLmNvbSIsImlhdCI6MTc4Mzc4OTIxOCwiZXhwIjoxNzgzODEwODE4fQ.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+        "expires_at": "2026-07-11T23:00:18.000Z",
+        "email": "grok-fixture@example.com",
+        "user_id": "xai-fixture-user",
+        "client_id": "b1a00492-073a-47ea-816f-4c329264a828"
+      },
+      "extra": {
+        "import_source": "authconv"
+      },
+      "priority": 50,
+      "concurrency": 3,
+      "auto_pause_on_expired": true
+    }
+  ]
+}

@@ -15,6 +15,7 @@ describe("web preferences", () => {
       outputModes: { sub2api: "single", cpa: "single" },
       previewFormat: "sub2api",
       allowSyntheticIdToken: false,
+      includeRefreshToken: false,
       locale: "zh-CN",
       themeMode: "dark",
       forcedInputFormat: "session",
@@ -30,6 +31,7 @@ describe("web preferences", () => {
       outputModes: { sub2api: "single" },
       previewFormat: "sub2api",
       allowSyntheticIdToken: false,
+      includeRefreshToken: false,
       locale: "zh",
       themeMode: "dark",
       forcedInputFormat: "session",
@@ -44,6 +46,7 @@ describe("web preferences", () => {
       outputModes: { codex2api: "single" },
       previewFormat: "codex2api",
       allowSyntheticIdToken: true,
+      includeRefreshToken: true,
       locale: "en",
       themeMode: "system",
       forcedInputFormat: "auto",
@@ -56,6 +59,7 @@ describe("web preferences", () => {
       outputModes: { codex2api: "single" },
       previewFormat: "codex2api",
       allowSyntheticIdToken: true,
+      includeRefreshToken: true,
       locale: "en",
       themeMode: "system",
       forcedInputFormat: "auto",
@@ -71,6 +75,22 @@ describe("web preferences", () => {
     const storage = memoryStorage();
     writeStoredPreferences({ selectedFormats: [] }, storage);
     expect(readStoredPreferences(storage)).toEqual({ selectedFormats: [] });
+  });
+
+  it("keeps Grok output and input preferences", () => {
+    const storage = memoryStorage();
+    writeStoredPreferences({
+      selectedFormats: ["grok", "cpa"],
+      outputModes: { grok: "single" },
+      previewFormat: "grok",
+      forcedInputFormat: "grok",
+    }, storage);
+    expect(readStoredPreferences(storage)).toMatchObject({
+      selectedFormats: ["cpa", "grok"],
+      outputModes: { grok: "single" },
+      previewFormat: "grok",
+      forcedInputFormat: "grok",
+    });
   });
 });
 

@@ -9,6 +9,7 @@ import {
   detectCliLocale,
   detectInputFormat,
   effectiveOutputModes,
+  filterAccountsForFormats,
   FORMAT_LABELS,
   normalizeInput,
   parseInputPayload,
@@ -72,6 +73,7 @@ type ParsedArgs = {
   stdout: boolean;
   zip: boolean;
   allowSyntheticIdToken: boolean;
+  includeRefreshToken: boolean;
   locale: Locale;
   inspect: boolean;
   dryRun: boolean;
@@ -141,42 +143,53 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
     });
 
     if (normalized.accounts.length === 0) {
-      return fail(1, [messages.errors.noAccounts, ...normalized.warnings]);
+      return fail(1, [messages.errors.noAccounts, ...normalized.rejections, ...normalized.warnings]);
     }
-    const visibleWarnings = outputWarnings(normalized, parsed.locale, parsed.allowSyntheticIdToken);
+    const successExitCode = normalized.rejections.length > 0 ? 1 : 0;
+    const visibleWarnings = normalized.warnings;
 
-    const formats = resolveFormats(parsed.formatValues, resolveInputFormat(loadedInputs), parsed.locale);
+    const formats = resolveFormats(parsed.formatValues, parsed.locale);
+    const exportAccounts = filterAccountsForFormats(normalized.accounts, formats);
     const files = buildOutputPlan(normalized.accounts, formats, {
       outputModes: effectiveOutputModes(parsed.outputModes, parsed.textMode),
       allowSyntheticIdToken: parsed.allowSyntheticIdToken,
+      includeRefreshToken: parsed.includeRefreshToken,
     });
     const serializedFiles = serializeOutputFiles(files, parsed.textMode);
+    const outputFormats = formats.filter((format) => serializedFiles.some((file) => file.format === format));
 
     if (parsed.inspect) {
-      return info(inspectSummary(normalized, parsed.locale, parsed.allowSyntheticIdToken));
+      return info(appendRejections(inspectSummary(normalized, parsed.locale), normalized.rejections), successExitCode);
+    }
+
+    if (serializedFiles.length === 0) {
+      return fail(1, [messages.errors.noApplicableFormats]);
     }
 
     const outputRoot = path.resolve(cwd, parsed.outDir);
-    const zipName = parsed.zip ? zipDownloadName(normalized.accounts) : undefined;
+    const zipName = parsed.zip ? zipDownloadName(exportAccounts) : undefined;
 
     if (parsed.dryRun) {
-      return info(dryRunSummary(
-        normalized.accounts.length,
-        zipName ? [{ path: zipName, accountCount: normalized.accounts.length }] : serializedFiles,
+      return info(appendRejections(dryRunSummary(
+        exportAccounts.length,
+        zipName ? [{ path: zipName, accountCount: exportAccounts.length }] : serializedFiles,
         visibleWarnings,
         outputRoot,
         parsed.locale,
-      ));
+      ), normalized.rejections), successExitCode);
     }
 
     if (parsed.stdout) {
-      if (formats.length !== 1 || serializedFiles.length !== 1) {
+      if (outputFormats.length !== 1 || serializedFiles.length !== 1) {
         return fail(2, [messages.errors.stdoutSingleFile]);
       }
       return {
-        exitCode: 0,
+        exitCode: successExitCode,
         stdout: serializedFiles[0].text,
-        stderr: humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, undefined, parsed.locale),
+        stderr: appendRejections(
+          humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, undefined, parsed.locale),
+          normalized.rejections,
+        ),
       };
     }
 
@@ -188,9 +201,12 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
       await mkdir(outputRoot, { recursive: true, mode: 0o700 });
       await writeFile(targetPath, zipOutputFiles(serializedFiles), { mode: 0o600 });
       return {
-        exitCode: 0,
+        exitCode: successExitCode,
         stdout: "",
-        stderr: fileSummary(normalized.accounts.length, formats, targetPath, visibleWarnings, parsed.locale),
+        stderr: appendRejections(
+          fileSummary(exportAccounts.length, outputFormats, targetPath, visibleWarnings, parsed.locale),
+          normalized.rejections,
+        ),
       };
     }
 
@@ -208,11 +224,14 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
       ? path.join(outputRoot, serializedFiles[0].path)
       : undefined;
     return {
-      exitCode: 0,
+      exitCode: successExitCode,
       stdout: "",
-      stderr: singleTargetPath
-        ? fileSummary(normalized.accounts.length, formats, singleTargetPath, visibleWarnings, parsed.locale)
-        : humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale),
+      stderr: appendRejections(
+        singleTargetPath
+          ? fileSummary(exportAccounts.length, outputFormats, singleTargetPath, visibleWarnings, parsed.locale)
+          : humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, outputRoot, parsed.locale),
+        normalized.rejections,
+      ),
     };
   } catch (error) {
     if (error instanceof CliError) {
@@ -252,6 +271,7 @@ function parseArgs(args: string[], locale: Locale): ParsedArgs {
     stdout: false,
     zip: false,
     allowSyntheticIdToken: true,
+    includeRefreshToken: true,
     locale,
     inspect: false,
     dryRun: false,
@@ -295,6 +315,9 @@ function parseArgs(args: string[], locale: Locale): ParsedArgs {
         break;
       case "--no-fake-id":
         parsed.allowSyntheticIdToken = false;
+        break;
+      case "--no-refresh-token":
+        parsed.includeRefreshToken = false;
         break;
       case "--stdin":
         setStdinInput(parsed);
@@ -370,6 +393,7 @@ function validateParsedArgs(parsed: ParsedArgs): void {
       parsed.force ||
       parsed.textMode !== "json" ||
       !parsed.allowSyntheticIdToken ||
+      !parsed.includeRefreshToken ||
       Object.keys(parsed.outputModes).length > 0;
     if (hasConversionOption) {
       throw new CliError(2, messages.errors.serveConflict);
@@ -661,6 +685,7 @@ function normalizeLoadedInputs(inputs: LoadedInput[], options: NormalizeOptions)
   return {
     accounts: dedupedAccounts,
     warnings: results.flatMap((result) => result.warnings),
+    rejections: results.flatMap((result) => result.rejections),
     inputFormat: resolveInputFormat(inputs),
   };
 }
@@ -671,7 +696,7 @@ function resolveInputFormat(inputs: LoadedInput[]): InputFormat {
     : "unknown";
 }
 
-function resolveFormats(values: string[], inputFormat: InputFormat, locale: Locale): OutputFormat[] {
+function resolveFormats(values: string[], locale: Locale): OutputFormat[] {
   if (values.length > 0) {
     return parseFormatList(values, {
       invalidFormatMessage: messagesFor(locale).cli.errors.unknownOutputFormat,
@@ -704,20 +729,6 @@ function groupWarnings(warnings: string[], locale: Locale): string[] {
     if (sources.length === 1) return `${sources[0]}: ${msg}`;
     return messages.groupedWarnings(msg, sources);
   });
-}
-
-function outputWarnings(result: NormalizeResult, locale: Locale, allowSyntheticIdToken: boolean): string[] {
-  if (allowSyntheticIdToken) {
-    return result.warnings;
-  }
-
-  const normalizeMessages = messagesFor(locale).normalize;
-  const syntheticWarnings = new Set(
-    result.accounts
-      .filter((account) => account.idTokenSynthetic)
-      .map((account) => normalizeMessages.syntheticIdToken(account.sourceName)),
-  );
-  return result.warnings.filter((warning) => !syntheticWarnings.has(warning));
 }
 
 function humanSummary(
@@ -756,7 +767,15 @@ function appendWarnings(lines: string[], warnings: string[], locale: Locale): vo
   }
 }
 
-function inspectSummary(result: NormalizeResult, locale: Locale, allowSyntheticIdToken: boolean): string {
+function appendRejections(summary: string, rejections: string[]): string {
+  if (rejections.length === 0) {
+    return summary;
+  }
+  const prefix = summary.endsWith("\n") ? summary : `${summary}\n`;
+  return `${prefix}${rejections.join("\n")}\n`;
+}
+
+function inspectSummary(result: NormalizeResult, locale: Locale): string {
   const messages = messagesFor(locale).cli.summary;
   const header = messages.inspectColumns;
   const rows = result.accounts.map((account, index) => [
@@ -772,7 +791,7 @@ function inspectSummary(result: NormalizeResult, locale: Locale, allowSyntheticI
   const formatRow = (cells: string[]) =>
     cells.map((cell, col) => cell.padEnd(widths[col], " ")).join("  ").trimEnd();
   const lines = [formatRow(header), ...rows.map(formatRow)];
-  for (const warning of groupWarnings(outputWarnings(result, locale, allowSyntheticIdToken), locale)) {
+  for (const warning of groupWarnings(result.warnings, locale)) {
     lines.push(`${messages.warning}: ${warning}`);
   }
   return `${lines.join("\n")}\n`;
@@ -831,7 +850,7 @@ function isOutputMode(value: string): value is OutputMode {
 }
 
 function isMergeableFormat(format: OutputFormat): boolean {
-  return format === "sub2api" || format === "codex2api";
+  return format === "sub2api" || format === "codex2api" || format === "grok";
 }
 
 function isNodeIoError(error: unknown): error is NodeJS.ErrnoException {
@@ -854,9 +873,9 @@ function fail(exitCode: number, messages: string[]): CliResult {
   };
 }
 
-function info(stderr: string): CliResult {
+function info(stderr: string, exitCode = 0): CliResult {
   return {
-    exitCode: 0,
+    exitCode,
     stdout: "",
     stderr,
   };

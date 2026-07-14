@@ -3,6 +3,7 @@ import {
   dedupeAccountsWithAffectedIndex,
   detectWebLocale,
   detectInputFormat,
+  filterAccountsForFormats,
   FORMAT_LABELS,
   inputFormatLabel,
   messagesFor,
@@ -31,11 +32,15 @@ import { zipDownloadName } from "../download-names.js";
 import { effectiveWebOutputModes } from "./output-modes.js";
 import {
   activeAccountSource,
+  displayCredentialExpiry,
+  effectiveFormats,
   importSummary,
+  isExpiredCredential,
   selectedIndexAfterRemoval,
   syncPreviewTabSelection,
   type AccountSourceKind,
 } from "./state-helpers.js";
+import { jwtPopoverText } from "./jwt-preview.js";
 import { outputOptionsUrl, parseOutputOptionsSearch } from "./url-state.js";
 import {
   readStoredPreferences,
@@ -44,20 +49,22 @@ import {
   type WebPreferences,
 } from "./preferences.js";
 
-const FORMATS: OutputFormat[] = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
+const FORMATS: OutputFormat[] = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"];
 const INPUT_FORMAT_BADGE_LABELS: Record<InputFormat, string> = {
   session: "Session",
   sub2api: "sub2api",
   cpa: "CPA",
+  grok: "Grok / xAI",
   codexmanager: "Codex Manager",
   codex2api: "Codex2Api",
   codex: "Codex Auth",
   unknown: "Unknown",
 };
-const SELECTABLE_INPUT_FORMATS: InputFormat[] = ["session", "sub2api", "cpa", "codexmanager", "codex2api", "codex"];
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
+const SELECTABLE_INPUT_FORMATS: InputFormat[] = ["session", "sub2api", "cpa", "grok", "codexmanager", "codex2api", "codex"];
+const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 
 const SESSION_URL = "https://chatgpt.com/api/auth/session";
+const CHEVRON_SVG = `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
 
 type FileSystemFileHandleLike = {
   kind: "file";
@@ -130,6 +137,7 @@ type ViewState = {
   nextInputIndex: number;
   forcedInputFormat: InputFormat | "auto";
   allowSyntheticIdToken: boolean;
+  includeRefreshToken: boolean;
   downloadBusy: boolean;
   locale: Locale;
 };
@@ -137,10 +145,11 @@ type ViewState = {
 const state: ViewState = {
   sourceErrors: [],
   accounts: [],
-  selectedFormats: ["cpa"],
+  selectedFormats: [...FORMATS],
   outputModes: {
     sub2api: "merged",
     codex2api: "merged",
+    grok: "merged",
   },
   outputTextMode: "json",
   previewFormat: "cpa",
@@ -150,6 +159,7 @@ const state: ViewState = {
   nextInputIndex: 1,
   forcedInputFormat: "auto",
   allowSyntheticIdToken: true,
+  includeRefreshToken: true,
   downloadBusy: false,
   locale: detectWebLocale(window.location.search),
 };
@@ -157,6 +167,10 @@ const state: ViewState = {
 const systemDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 let toastTimer: number | undefined;
 let copyResetTimer: number | undefined;
+let jwtPopoverShowTimer: number | undefined;
+let jwtPopoverHideTimer: number | undefined;
+let jwtPopoverTrigger: HTMLElement | undefined;
+let jwtPopoverPinned = false;
 let dragDepth = 0;
 
 const els = {
@@ -178,10 +192,15 @@ const els = {
   jsonlToggleContainer: byId("jsonlToggleContainer"),
   fakeIdToggle: byId<HTMLInputElement>("fakeIdToggle"),
   fakeIdToggleContainer: byId("fakeIdToggleContainer"),
+  refreshTokenToggle: byId<HTMLInputElement>("refreshTokenToggle"),
+  refreshTokenToggleContainer: byId("refreshTokenToggleContainer"),
   accountSection: byId("accountSection"),
   clearAccountsButton: byId<HTMLButtonElement>("clearAccountsButton"),
   accountRows: byId("accountRows"),
   previewOutput: byId("previewOutput"),
+  jwtPopover: byId("jwtPopover"),
+  jwtPopoverBody: byId("jwtPopoverBody"),
+  jwtPopoverCopy: byId<HTMLButtonElement>("jwtPopoverCopy"),
   copyButton: byId<HTMLButtonElement>("copyButton"),
   downloadButton: byId<HTMLButtonElement>("downloadButton"),
   downloadBtnText: byId<HTMLSpanElement>("downloadBtnText"),
@@ -205,6 +224,7 @@ function init(): void {
   applyTheme();
   renderFormatControls();
   bindEvents();
+  bindCollapsiblePanels();
 
   // Initialize draft source from current textarea value (e.g. if retained on browser refresh)
   const initialText = els.jsonInput.value.trim();
@@ -399,10 +419,11 @@ function bindEvents(): void {
   window.addEventListener("blur", hideDragOverlay);
 
   els.selectAllFormats.addEventListener("change", () => {
-    state.selectedFormats = els.selectAllFormats.checked ? [...FORMATS] : [];
-    if (!state.selectedFormats.includes(state.previewFormat)) {
-      state.previewFormat = state.selectedFormats[0] ?? "cpa";
-    }
+    const formats = visibleFormats();
+    state.selectedFormats = els.selectAllFormats.checked
+      ? FORMATS.filter((format) => state.selectedFormats.includes(format) || formats.includes(format))
+      : state.selectedFormats.filter((format) => !formats.includes(format));
+    syncPreviewFormat(currentAccountSource().accounts);
     persistPreferenceState();
     renderFormatControls();
     recomputeOutput();
@@ -421,9 +442,71 @@ function bindEvents(): void {
     recomputeOutput();
   });
 
+  els.refreshTokenToggle.addEventListener("change", () => {
+    state.includeRefreshToken = els.refreshTokenToggle.checked;
+    persistPreferenceState();
+    recomputeOutput();
+  });
+
   els.copyButton.addEventListener("click", () => {
     void copyPreview();
   });
+
+  els.previewOutput.addEventListener("mouseover", (event) => {
+    const trigger = jwtHoverTrigger(event.target);
+    if (trigger) {
+      scheduleJwtPopover(trigger);
+    }
+  });
+  els.previewOutput.addEventListener("mouseout", (event) => {
+    if (jwtHoverTrigger(event.target)) {
+      scheduleJwtPopoverHide();
+    }
+  });
+  els.previewOutput.addEventListener("focusin", (event) => {
+    const trigger = jwtHoverTrigger(event.target);
+    if (trigger) {
+      scheduleJwtPopover(trigger);
+    }
+  });
+  els.previewOutput.addEventListener("focusout", (event) => {
+    if (jwtHoverTrigger(event.target)) {
+      scheduleJwtPopoverHide();
+    }
+  });
+  els.previewOutput.addEventListener("click", (event) => {
+    const trigger = jwtHoverTrigger(event.target);
+    if (trigger) {
+      showJwtPopover(trigger);
+      jwtPopoverPinned = true;
+    }
+  });
+  els.jwtPopover.addEventListener("mouseenter", cancelJwtPopoverHide);
+  els.jwtPopover.addEventListener("mouseleave", scheduleJwtPopoverHide);
+  els.jwtPopoverCopy.addEventListener("click", () => {
+    const text = els.jwtPopoverBody.textContent;
+    if (text) {
+      void navigator.clipboard.writeText(text).then(() => {
+        showCopySuccessFeedback();
+      });
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideJwtPopover();
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (jwtPopoverPinned && !els.jwtPopover.contains(event.target as Node) && !jwtHoverTrigger(event.target)) {
+      hideJwtPopover();
+    }
+  });
+  window.addEventListener("scroll", (event) => {
+    if (event.target instanceof HTMLElement && els.jwtPopover.contains(event.target)) {
+      return;
+    }
+    hideJwtPopover();
+  }, true);
 
   els.downloadButton.addEventListener("click", () => {
     void downloadCurrentPlan();
@@ -494,6 +577,26 @@ function bindEvents(): void {
   });
 }
 
+function appendChevrons(): void {
+  const outputTitle = document.getElementById("outputTitle");
+  if (outputTitle && !outputTitle.parentElement?.querySelector(".chevron-icon")) {
+    outputTitle.insertAdjacentHTML("afterend", CHEVRON_SVG);
+  }
+}
+
+function bindCollapsiblePanels(): void {
+  const titleLine = document.querySelector(".title-line");
+  const configArea = document.getElementById("outputConfigArea");
+  const resultHeader = document.querySelector(".result-header");
+  if (titleLine && configArea && resultHeader) {
+    titleLine.classList.add("collapsible-header");
+    titleLine.addEventListener("click", () => {
+      configArea.classList.toggle("is-collapsed");
+      resultHeader.classList.toggle("is-collapsed");
+    });
+  }
+}
+
 function applyOutputOptionsFromUrl(): void {
   applyPreferences(parseOutputOptionsSearch(window.location.search));
 }
@@ -524,6 +627,9 @@ function applyPreferences(options: Partial<WebPreferences>): void {
   if (options.allowSyntheticIdToken !== undefined) {
     state.allowSyntheticIdToken = options.allowSyntheticIdToken;
   }
+  if (options.includeRefreshToken !== undefined) {
+    state.includeRefreshToken = options.includeRefreshToken;
+  }
   if (options.locale) {
     state.locale = options.locale;
   }
@@ -537,6 +643,7 @@ function applyPreferences(options: Partial<WebPreferences>): void {
 
 function syncPreferenceControls(): void {
   els.fakeIdToggle.checked = state.allowSyntheticIdToken;
+  els.refreshTokenToggle.checked = state.includeRefreshToken;
   els.jsonlToggle.checked = state.outputTextMode === "jsonl";
 }
 
@@ -552,6 +659,7 @@ function persistPreferences(): void {
     outputModes: state.outputModes,
     previewFormat: state.previewFormat,
     allowSyntheticIdToken: state.allowSyntheticIdToken,
+    includeRefreshToken: state.includeRefreshToken,
     locale: state.locale,
     themeMode: state.themeMode,
     forcedInputFormat: state.forcedInputFormat,
@@ -568,6 +676,7 @@ function writeOutputOptionsToUrl(): void {
       outputModes: state.outputModes,
       previewFormat: state.previewFormat,
       allowSyntheticIdToken: state.allowSyntheticIdToken,
+      includeRefreshToken: state.includeRefreshToken,
       locale: state.locale,
     }),
   );
@@ -610,6 +719,7 @@ function applyLocale(): void {
   setText("exportFormatLabel", text.exportFormat);
   setText("jsonlToggleText", text.jsonlFormat);
   setText("fakeIdToggleText", text.fakeId);
+  setText("refreshTokenToggleText", text.refreshToken);
   setText("account-title", text.accountTitle);
   setText("clearAccountsButtonText", text.clearAccounts);
   setText("accountColumnIdentity", text.accountColumns[0]);
@@ -617,6 +727,7 @@ function applyLocale(): void {
   setText("accountColumnExpires", text.accountColumns[2]);
   setText("accountColumnAction", text.accountColumns[3]);
   setText("copyBtnText", text.copyPreview);
+  appendChevrons();
 
   els.jsonInput.placeholder = text.inputPlaceholder;
   els.jsonInput.setAttribute("aria-label", text.inputAria);
@@ -651,12 +762,14 @@ function applyLocale(): void {
 
   bindTooltip(els.jsonlToggleContainer, text.jsonlTooltip);
   bindTooltip(els.fakeIdToggleContainer, text.fakeIdTooltip);
+  bindTooltip(els.refreshTokenToggleContainer, text.refreshTokenTooltip);
 }
 
 function renderFormatControls(): void {
   const text = webMessages();
+  const formats = visibleFormats();
   els.formatChecks.replaceChildren(
-    ...FORMATS.map((format) => {
+    ...formats.map((format) => {
       const input = document.createElement("input");
       input.type = "checkbox";
       input.id = `opt_${format}`;
@@ -666,9 +779,7 @@ function renderFormatControls(): void {
           ? [...state.selectedFormats, format]
           : state.selectedFormats.filter((item) => item !== format);
         state.selectedFormats = FORMATS.filter((item) => state.selectedFormats.includes(item));
-        if (!state.selectedFormats.includes(state.previewFormat)) {
-          state.previewFormat = state.selectedFormats[0] ?? "cpa";
-        }
+        syncPreviewFormat(currentAccountSource().accounts);
         persistPreferenceState();
         renderFormatControls();
         recomputeOutput();
@@ -677,7 +788,15 @@ function renderFormatControls(): void {
       const label = document.createElement("label");
       label.className = "format-option-label";
       label.htmlFor = `opt_${format}`;
-      label.textContent = FORMAT_LABELS[format];
+      const name = document.createElement("span");
+      name.className = "format-option-name";
+      name.textContent = FORMAT_LABELS[format];
+      const platforms = document.createElement("span");
+      platforms.className = "format-platforms";
+      for (const provider of formatProviders(format)) {
+        platforms.append(renderPlatformMark(provider));
+      }
+      label.append(name, platforms);
 
       const option = document.createElement("div");
       option.className = "format-option";
@@ -696,7 +815,9 @@ function renderFormatControls(): void {
     }),
   );
 
-  const previewFormats = FORMATS.filter((format) => state.selectedFormats.includes(format));
+  const previewFormats = currentAccountSource().accounts.length === 0
+    ? []
+    : formats.filter((format) => state.selectedFormats.includes(format));
   if (previewFormats.length === 0) {
     els.previewTabsContainer.replaceChildren();
     els.previewOutput.removeAttribute("aria-labelledby");
@@ -737,8 +858,49 @@ function renderFormatControls(): void {
     syncPreviewTabs();
   }
 
-  els.selectAllFormats.checked = state.selectedFormats.length === FORMATS.length;
-  els.selectAllFormats.indeterminate = state.selectedFormats.length > 0 && state.selectedFormats.length < FORMATS.length;
+  const selectedVisibleCount = formats.filter((format) => state.selectedFormats.includes(format)).length;
+  els.selectAllFormats.checked = formats.length > 0 && selectedVisibleCount === formats.length;
+  els.selectAllFormats.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < formats.length;
+}
+
+function visibleFormats(): OutputFormat[] {
+  return applicableFormats(currentAccountSource().accounts);
+}
+
+function applicableFormats(accounts: NormalizedAccount[]): OutputFormat[] {
+  if (accounts.length === 0) {
+    return FORMATS;
+  }
+  return FORMATS.filter((format) => accounts.some((account) => formatSupportsProvider(format, account.provider)));
+}
+
+function currentEffectiveFormats(accounts: NormalizedAccount[]): OutputFormat[] {
+  return effectiveFormats(state.selectedFormats, applicableFormats(accounts));
+}
+
+function formatSupportsProvider(format: OutputFormat, provider: NormalizedAccount["provider"]): boolean {
+  if (format === "cpa" || format === "sub2api") {
+    return provider === "openai" || provider === "xai";
+  }
+  return format === "grok" ? provider === "xai" : provider === "openai";
+}
+
+function formatProviders(format: OutputFormat): NormalizedAccount["provider"][] {
+  if (format === "cpa" || format === "sub2api") {
+    return ["openai", "xai"];
+  }
+  return format === "grok" ? ["xai"] : ["openai"];
+}
+
+function renderPlatformMark(provider: NormalizedAccount["provider"]): HTMLSpanElement {
+  const mark = document.createElement("span");
+  mark.className = `platform-mark platform-mark-${provider}`;
+  mark.setAttribute("aria-label", provider === "xai" ? "Grok" : "OpenAI");
+  mark.title = provider === "xai" ? "Grok" : "OpenAI";
+  mark.innerHTML = provider === "xai"
+    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>`
+    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`;
+  return mark;
 }
 
 function recompute(): void {
@@ -746,10 +908,12 @@ function recompute(): void {
 
   const draft = draftAccounts();
   const activeSource = currentAccountSource();
+  syncPreviewFormat(activeSource.accounts);
   refreshSerializedPreview(activeSource.accounts);
 
   renderInputError();
   renderInputFormatIndicator();
+  renderFormatControls();
   renderOutputHeader(activeSource);
   renderPreview();
   renderAccountTable(state.accounts, draft, activeSource.kind);
@@ -757,6 +921,7 @@ function recompute(): void {
 
 function recomputeOutput(): void {
   const activeSource = currentAccountSource();
+  syncPreviewFormat(activeSource.accounts);
   refreshSerializedPreview(activeSource.accounts);
   renderOutputHeader(activeSource);
   renderPreview();
@@ -898,16 +1063,18 @@ function renderSourceBadge(format: InputFormat | undefined): HTMLSpanElement | n
 
 function renderOutputHeader(activeSource: ReturnType<typeof activeAccountSource>): void {
   const text = webMessages();
-  const activeCount = activeSource.accounts.length;
-  const canExport = canExportCurrentPlan(activeSource);
-  const zip = canExport && willDownloadZip(activeCount);
+  const activeFormats = currentEffectiveFormats(activeSource.accounts);
+  const exportAccounts = filterAccountsForFormats(activeSource.accounts, activeFormats);
+  const exportCount = exportAccounts.length;
+  const canExport = canExportCurrentPlan(exportAccounts, activeFormats);
+  const zip = canExport && willDownloadZip(exportCount, activeFormats);
   const fileTypeLabel = state.outputTextMode === "jsonl" ? "JSONL" : "JSON";
   const parts = [];
-  if (activeCount > 0) {
-    parts.push(text.accountCount(activeCount));
+  if (exportCount > 0) {
+    parts.push(text.accountCount(exportCount));
   }
   if (canExport) {
-    parts.push(state.selectedFormats.length === 1 ? FORMAT_LABELS[state.selectedFormats[0]] : text.formatCount(state.selectedFormats.length));
+    parts.push(activeFormats.length === 1 ? FORMAT_LABELS[activeFormats[0]] : text.formatCount(activeFormats.length));
     parts.push(zip ? "ZIP" : fileTypeLabel);
   }
   els.outputMeta.textContent = parts.join(" · ");
@@ -918,10 +1085,10 @@ function renderOutputHeader(activeSource: ReturnType<typeof activeAccountSource>
   els.downloadBtnText.textContent = state.downloadBusy
     ? text.exportPreparing
     : canExport
-      ? text.exportAccounts(activeCount)
+      ? text.exportAccounts(exportCount)
       : text.downloadDefault;
   els.downloadButton.removeAttribute("title");
-  els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, activeCount, zip));
+  els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, exportCount, zip));
   renderTextModeControl();
 
   // Show/Hide Clear Accounts Button
@@ -936,6 +1103,7 @@ function renderPreview(): void {
   const text = webMessages();
   const file = currentPreviewFile();
   els.previewOutput.classList.toggle("is-empty", !file);
+  hideJwtPopover();
   const filePathFooter = document.getElementById("previewFilePath");
   const fileTypeFooter = document.getElementById("previewFileType");
   if (!file) {
@@ -945,8 +1113,9 @@ function renderPreview(): void {
     if (fileTypeFooter) {
       fileTypeFooter.textContent = `${state.outputTextMode.toUpperCase()} | UTF-8`;
     }
-    els.previewOutput.textContent =
-      state.selectedFormats.length === 0 ? text.previewNoFormat : text.previewNoInput;
+    els.previewOutput.textContent = currentEffectiveFormats(currentAccountSource().accounts).length === 0
+      ? text.previewNoFormat
+      : text.previewNoInput;
     return;
   }
   if (filePathFooter) {
@@ -991,7 +1160,7 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
       row.setAttribute("role", "option");
       row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
 
-      // Special rendering for first cell (Account Name + Badge)
+      // Special rendering for first cell (Account Name)
       const labelCell = document.createElement("span");
       labelCell.className = "account-cell account-identity-cell";
       labelCell.dataset.label = text.accountCellAccount;
@@ -1012,12 +1181,13 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
         labelCell.append(sourceBadge);
       }
 
-      row.append(
+      const cells: HTMLElement[] = [
         labelCell,
-        accountCell(text.planType, account.planType ?? text.unknown),
-        accountCell(text.expiresAt, displayExpiresAt(account.expiresAt), account.expiresAt),
+        accountPlanCell(account),
+        accountExpiryCell(account),
         accountActionCell(account, index),
-      );
+      ];
+      row.append(...cells);
       return row;
     }),
     ...draft.map((account, index) => {
@@ -1048,12 +1218,13 @@ function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAcco
         labelCell.append(sourceBadge);
       }
 
-      row.append(
+      const cells: HTMLElement[] = [
         labelCell,
-        accountCell(text.planType, account.planType ?? text.unknown),
-        accountCell(text.expiresAt, displayExpiresAt(account.expiresAt), account.expiresAt),
+        accountPlanCell(account),
+        accountExpiryCell(account),
         emptyActionCell(),
-      );
+      ];
+      row.append(...cells);
       return row;
     }),
   );
@@ -1135,6 +1306,13 @@ function refreshSerializedPreview(accounts: NormalizedAccount[]): void {
   state.serializedFiles = buildSerializedPreviewFiles(accounts);
 }
 
+function syncPreviewFormat(accounts: NormalizedAccount[]): void {
+  const formats = currentEffectiveFormats(accounts);
+  if (!formats.includes(state.previewFormat)) {
+    state.previewFormat = formats[0] ?? "cpa";
+  }
+}
+
 function buildSerializedOutputFiles(accounts: NormalizedAccount[], formats: OutputFormat[]): SerializedOutputFile[] {
   if (accounts.length === 0 || formats.length === 0) {
     return [];
@@ -1143,13 +1321,14 @@ function buildSerializedOutputFiles(accounts: NormalizedAccount[], formats: Outp
     buildOutputPlan(accounts, formats, {
       outputModes: currentOutputModes(),
       allowSyntheticIdToken: state.allowSyntheticIdToken,
+      includeRefreshToken: state.includeRefreshToken,
     }),
     state.outputTextMode,
   );
 }
 
 function buildSerializedPreviewFiles(accounts: NormalizedAccount[]): SerializedOutputFile[] {
-  if (!state.selectedFormats.includes(state.previewFormat) || accounts.length === 0) {
+  if (!currentEffectiveFormats(accounts).includes(state.previewFormat) || accounts.length === 0) {
     return [];
   }
   const boundedIndex = Math.min(state.selectedAccountIndex, accounts.length - 1);
@@ -1174,7 +1353,7 @@ function canSelectPreviewAccount(accountCount: number): boolean {
 }
 
 function isPreviewFormatPerAccount(format: OutputFormat): boolean {
-  if (!state.selectedFormats.includes(format)) {
+  if (!currentEffectiveFormats(currentAccountSource().accounts).includes(format)) {
     return false;
   }
   if (state.outputTextMode === "jsonl") {
@@ -1558,20 +1737,22 @@ async function copyPreview(): Promise<void> {
 async function downloadCurrentPlan(): Promise<void> {
   const text = webMessages();
   const activeSource = currentAccountSource();
-  if (state.downloadBusy || !canExportCurrentPlan(activeSource)) {
+  const formats = currentEffectiveFormats(activeSource.accounts);
+  const exportAccounts = filterAccountsForFormats(activeSource.accounts, formats);
+  if (state.downloadBusy || !canExportCurrentPlan(exportAccounts, formats)) {
     return;
   }
 
-  const zip = willDownloadZip(activeSource.accounts.length);
+  const zip = willDownloadZip(exportAccounts.length, formats);
   if (zip) {
     state.downloadBusy = true;
     renderOutputHeader(activeSource);
     try {
       await nextAnimationFrame();
-      const serializedFiles = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats);
+      const serializedFiles = buildSerializedOutputFiles(exportAccounts, formats);
       const bytes = zipOutputFiles(serializedFiles);
       const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const name = zipDownloadName(activeSource.accounts);
+      const name = zipDownloadName(exportAccounts);
       downloadBlob(new Blob([payload], { type: "application/zip" }), name);
       showToast(text.exportZipToast(name));
     } finally {
@@ -1581,7 +1762,7 @@ async function downloadCurrentPlan(): Promise<void> {
     return;
   }
 
-  const file = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats)[0];
+  const file = buildSerializedOutputFiles(exportAccounts, formats)[0];
   if (!file) {
     return;
   }
@@ -1732,8 +1913,7 @@ function displayExpiresAt(value: string | undefined): string {
   if (!value) {
     return webMessages().unknown;
   }
-  const isoMinute = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-  return isoMinute ? `${isoMinute[1]} ${isoMinute[2]}` : value;
+  return displayCredentialExpiry(value, state.locale);
 }
 
 function accountCell(label: string, value: string, title?: string): HTMLSpanElement {
@@ -1745,6 +1925,39 @@ function accountCell(label: string, value: string, title?: string): HTMLSpanElem
   if (title && title !== value) {
     cell.setAttribute("aria-label", `${label}: ${title}`);
   }
+  return cell;
+}
+
+function accountExpiryCell(account: NormalizedAccount): HTMLSpanElement {
+  const text = webMessages();
+  const value = displayExpiresAt(account.expiresAt);
+  const cell = accountCell(text.expiresAt, value, account.expiresAt);
+  cell.classList.add("account-expiry-cell");
+  cell.classList.toggle("is-expired", isExpiredCredential(account.expiresAt));
+  return cell;
+}
+
+function accountPlanCell(account: NormalizedAccount): HTMLSpanElement {
+  const text = webMessages();
+  const cell = document.createElement("span");
+  cell.className = "account-cell account-plan-cell";
+  cell.dataset.label = text.planType;
+
+  if (account.provider !== "unknown") {
+    const badge = renderPlatformMark(account.provider);
+    badge.style.marginRight = "6px";
+    badge.style.flexShrink = "0";
+    cell.append(badge);
+  }
+
+  const planVal = account.planType?.trim();
+  const isUnknown = !planVal || planVal === "unknown" || planVal === text.unknown;
+  if (!isUnknown) {
+    const planSpan = document.createElement("span");
+    planSpan.textContent = planVal;
+    cell.append(planSpan);
+  }
+
   return cell;
 }
 
@@ -1787,21 +2000,24 @@ function outputFallbackName(): string {
   return state.outputTextMode === "jsonl" ? "authconv.jsonl" : "authconv.json";
 }
 
-function canExportCurrentPlan(activeSource: ReturnType<typeof activeAccountSource>): boolean {
-  return state.selectedFormats.length > 0 && activeSource.accounts.length > 0;
+function canExportCurrentPlan(
+  accounts: readonly NormalizedAccount[],
+  formats: readonly OutputFormat[],
+): boolean {
+  return formats.length > 0 && accounts.length > 0;
 }
 
-function willDownloadZip(accountCount: number): boolean {
-  if (accountCount <= 0 || state.selectedFormats.length === 0) {
+function willDownloadZip(accountCount: number, formats: readonly OutputFormat[]): boolean {
+  if (accountCount <= 0 || formats.length === 0) {
     return false;
   }
-  if (state.selectedFormats.length > 1) {
+  if (formats.length > 1) {
     return true;
   }
   if (state.outputTextMode === "jsonl") {
     return false;
   }
-  const format = state.selectedFormats[0];
+  const format = formats[0];
   if (isMergedFormat(format) && currentOutputModes()[format] !== "single") {
     return false;
   }
@@ -1825,12 +2041,118 @@ function highlightJson(text: string): string {
       } else if (match === "null") {
         className = "json-null";
       }
+      if (className === "json-string" && match.startsWith('"') && match.endsWith('"')) {
+        const token = match.slice(1, -1);
+        if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(token) && jwtPopoverText(token)) {
+          return `"<span class="json-string jwt-token-hoverable" data-jwt="${token}" tabindex="0" aria-label="${escapeHtml(webMessages().jwtHoverAria)}">${token}</span>"`;
+        }
+      }
       if (className === "json-key") {
         return `<span class="${className}">${match.slice(0, -1)}</span>:`;
       }
       return `<span class="${className}">${match}</span>`;
     },
   );
+}
+
+function jwtHoverTrigger(target: EventTarget | null): HTMLElement | undefined {
+  return target instanceof HTMLElement
+    ? target.closest<HTMLElement>(".jwt-token-hoverable") ?? undefined
+    : undefined;
+}
+
+function scheduleJwtPopover(trigger: HTMLElement): void {
+  window.clearTimeout(jwtPopoverShowTimer);
+  cancelJwtPopoverHide();
+  jwtPopoverShowTimer = window.setTimeout(() => showJwtPopover(trigger), 250);
+}
+
+function showJwtPopover(trigger: HTMLElement): void {
+  window.clearTimeout(jwtPopoverShowTimer);
+  cancelJwtPopoverHide();
+  const token = trigger.dataset.jwt;
+  const preview = token ? jwtPopoverText(token) : undefined;
+  if (!preview) {
+    return;
+  }
+  jwtPopoverTrigger?.removeAttribute("aria-describedby");
+  jwtPopoverTrigger = trigger;
+  trigger.setAttribute("aria-describedby", "jwtPopover");
+  els.jwtPopoverBody.innerHTML = highlightJson(preview);
+  els.jwtPopover.hidden = false;
+  positionJwtPopover(trigger);
+  requestAnimationFrame(() => els.jwtPopover.classList.add("visible"));
+}
+
+function positionJwtPopover(trigger: HTMLElement): void {
+  const gap = 8;
+  const viewportPadding = 8;
+  const triggerRect = trigger.getBoundingClientRect();
+  const popoverRect = els.jwtPopover.getBoundingClientRect();
+  const maxLeft = Math.max(viewportPadding, window.innerWidth - popoverRect.width - viewportPadding);
+  const left = Math.min(Math.max(triggerRect.left, viewportPadding), maxLeft);
+  const below = triggerRect.bottom + gap;
+  const above = triggerRect.top - popoverRect.height - gap;
+  const top = below + popoverRect.height <= window.innerHeight - viewportPadding
+    ? below
+    : Math.max(viewportPadding, above);
+  els.jwtPopover.style.left = `${Math.round(left)}px`;
+  els.jwtPopover.style.top = `${Math.round(top)}px`;
+}
+
+function cancelJwtPopoverHide(): void {
+  window.clearTimeout(jwtPopoverHideTimer);
+}
+
+function scheduleJwtPopoverHide(): void {
+  if (jwtPopoverPinned) {
+    return;
+  }
+  window.clearTimeout(jwtPopoverShowTimer);
+  window.clearTimeout(jwtPopoverHideTimer);
+  jwtPopoverHideTimer = window.setTimeout(hideJwtPopover, 800);
+}
+
+function hideJwtPopover(): void {
+  window.clearTimeout(jwtPopoverShowTimer);
+  window.clearTimeout(jwtPopoverHideTimer);
+  els.jwtPopover.classList.remove("visible");
+  jwtPopoverTrigger?.removeAttribute("aria-describedby");
+  jwtPopoverTrigger = undefined;
+  jwtPopoverPinned = false;
+
+  // Reset copy button feedback
+  const copyBtn = els.jwtPopoverCopy;
+  copyBtn.classList.remove("copied");
+  const copyIcon = copyBtn.querySelector(".copy-icon") as HTMLElement | null;
+  const checkIcon = copyBtn.querySelector(".check-icon") as HTMLElement | null;
+  if (copyIcon && checkIcon) {
+    copyIcon.style.display = "block";
+    checkIcon.style.display = "none";
+  }
+
+  window.setTimeout(() => {
+    if (!els.jwtPopover.classList.contains("visible")) {
+      els.jwtPopover.hidden = true;
+    }
+  }, 160);
+}
+
+function showCopySuccessFeedback(): void {
+  const copyBtn = els.jwtPopoverCopy;
+  const copyIcon = copyBtn.querySelector(".copy-icon") as HTMLElement | null;
+  const checkIcon = copyBtn.querySelector(".check-icon") as HTMLElement | null;
+  if (!copyIcon || !checkIcon) {
+    return;
+  }
+  copyBtn.classList.add("copied");
+  copyIcon.style.display = "none";
+  checkIcon.style.display = "block";
+  window.setTimeout(() => {
+    copyBtn.classList.remove("copied");
+    copyIcon.style.display = "block";
+    checkIcon.style.display = "none";
+  }, 1200);
 }
 
 function escapeHtml(text: string): string {

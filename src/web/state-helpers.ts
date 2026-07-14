@@ -22,6 +22,14 @@ export type PreviewTabElement = {
   };
 };
 
+export function effectiveFormats(
+  selectedFormats: readonly OutputFormat[],
+  applicableFormats: readonly OutputFormat[],
+): OutputFormat[] {
+  const selected = new Set(selectedFormats);
+  return applicableFormats.filter((format) => selected.has(format));
+}
+
 export function activeAccountSource(
   accounts: NormalizedAccount[],
   draftAccounts: NormalizedAccount[],
@@ -68,4 +76,37 @@ export function importSummary(processed: number, beforeCount: number, afterCount
     added,
     merged: Math.max(processed - added, 0),
   };
+}
+
+export function isExpiredCredential(expiresAt: string | undefined, now = Date.now()): boolean {
+  if (!expiresAt) {
+    return false;
+  }
+  const expiresAtTime = new Date(expiresAt).getTime();
+  return Number.isFinite(expiresAtTime) && expiresAtTime <= now;
+}
+
+export function displayCredentialExpiry(
+  expiresAt: string,
+  locale: "zh" | "en",
+  timeZone?: string,
+): string {
+  const date = new Date(expiresAt);
+  if (!Number.isFinite(date.getTime())) {
+    return expiresAt;
+  }
+
+  const parts = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${value("year")}-${value("month")}-${value("day")} ${value("hour")}:${value("minute")}`;
 }

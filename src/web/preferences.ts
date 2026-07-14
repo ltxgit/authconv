@@ -9,6 +9,7 @@ export type WebPreferences = {
   outputModes: OutputModes;
   previewFormat: OutputFormat;
   allowSyntheticIdToken: boolean;
+  includeRefreshToken: boolean;
   locale: Locale;
   themeMode: ThemeMode;
   forcedInputFormat: InputFormat | "auto";
@@ -19,12 +20,13 @@ export type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 export const PREFERENCES_STORAGE_KEY = "authconv.preferences.v1";
 
 const OUTPUT_FORMATS = new Set<OutputFormat>(ALL_FORMATS);
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
+const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 const INPUT_FORMATS = new Set<InputFormat | "auto">([
   "auto",
   "session",
   "sub2api",
   "cpa",
+  "grok",
   "codexmanager",
   "codex2api",
   "codex",
@@ -78,6 +80,9 @@ export function sanitizePreferences(value: unknown): Partial<WebPreferences> {
   const allowSyntheticIdToken = typeof value.allowSyntheticIdToken === "boolean"
     ? value.allowSyntheticIdToken
     : undefined;
+  const includeRefreshToken = typeof value.includeRefreshToken === "boolean"
+    ? value.includeRefreshToken
+    : undefined;
   const locale = typeof value.locale === "string" ? normalizeLocale(value.locale) : undefined;
   const themeMode = parseThemeMode(value.themeMode);
   const forcedInputFormat = parseInputFormat(value.forcedInputFormat);
@@ -88,6 +93,7 @@ export function sanitizePreferences(value: unknown): Partial<WebPreferences> {
     ...(Object.keys(outputModes).length > 0 ? { outputModes } : {}),
     ...(previewFormat ? { previewFormat } : {}),
     ...(allowSyntheticIdToken !== undefined ? { allowSyntheticIdToken } : {}),
+    ...(includeRefreshToken !== undefined ? { includeRefreshToken } : {}),
     ...(locale ? { locale } : {}),
     ...(themeMode ? { themeMode } : {}),
     ...(forcedInputFormat ? { forcedInputFormat } : {}),

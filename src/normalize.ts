@@ -10,7 +10,10 @@ import {
 } from "./jwt.js";
 import { DEFAULT_LOCALE, inputFormatLabel, messagesFor } from "./i18n.js";
 import { firstRecord, firstString, isRecord } from "./object.js";
-import type { InputFormat, NormalizedAccount, NormalizeOptions, NormalizeResult, NormalizeSource } from "./types.js";
+import type { InputFormat, Locale, NormalizedAccount, NormalizeOptions, NormalizeResult, NormalizeSource } from "./types.js";
+import { XAI_ISSUER } from "./xai.js";
+
+const OPENAI_ISSUER = "https://auth.openai.com";
 
 type Candidate = {
   records: Record<string, unknown>[];
@@ -65,9 +68,17 @@ function detectRecordInputFormat(input: Record<string, unknown>): InputFormat {
     return "sub2api";
   }
 
+  if (isGrokAuthRecord(input)) {
+    return "grok";
+  }
+
   // CPA
-  if (input.type === "codex" && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
+  if ((input.type === "codex" || input.type === "xai") && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
     return "cpa";
+  }
+
+  if (hasXaiJwt(input)) {
+    return "grok";
   }
 
   // Codex auth.json
@@ -104,11 +115,20 @@ export function normalizeInput(input: unknown, source: NormalizeSource, options:
   const locale = options.locale ?? DEFAULT_LOCALE;
   const messages = messagesFor(locale).normalize;
   const warnings: string[] = [];
+  const rejections: string[] = [];
   const selectedFormat = selectedInputFormat(options.inputFormat);
   const detectedFormat = detectInputFormat(input);
   const inputFormat = selectedFormat ?? detectedFormat;
   const candidates = extractCandidates(input, source, selectedFormat);
-  const accounts = candidates
+  const acceptedCandidates = candidates.filter((candidate) => {
+    const rejection = candidateRejectionWarning(candidate, options.locale ?? DEFAULT_LOCALE);
+    if (rejection) {
+      rejections.push(rejection);
+      return false;
+    }
+    return true;
+  });
+  const accounts = acceptedCandidates
     .map((candidate, index) => {
       const account = normalizeCandidate(candidate, index, options);
       if (account) {
@@ -118,7 +138,7 @@ export function normalizeInput(input: unknown, source: NormalizeSource, options:
     })
     .filter((account): account is NormalizedAccount => account !== undefined);
 
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && rejections.length === 0) {
     warnings.push(
       selectedFormat
         ? messages.invalidInputFormat(source.sourceName, inputFormatLabel(selectedFormat, locale))
@@ -129,8 +149,21 @@ export function normalizeInput(input: unknown, source: NormalizeSource, options:
   return {
     accounts,
     warnings: warnings.concat(accounts.flatMap((account) => account.warnings)),
+    rejections,
     inputFormat: selectedFormat ?? commonAccountInputFormat(accounts) ?? inputFormat,
   };
+}
+
+function candidateRejectionWarning(candidate: Candidate, locale: Locale): string | undefined {
+  const records = candidate.records;
+  const accessClaims = decodeJwtPayload(firstString(records, ["access_token", "accessToken", "key"]));
+  const idClaims = decodeJwtPayload(firstString(records, ["id_token", "idToken"]));
+  const structureProvider = providerFromStructure(candidate, records);
+  const jwtProvider = providerFromIssuer(claimString(accessClaims, "iss") ?? claimString(idClaims, "iss"));
+  if (structureProvider && jwtProvider && structureProvider !== jwtProvider) {
+    return `${candidate.sourceName}: ${locale === "en" ? "provider conflict" : "平台冲突"}`;
+  }
+  return undefined;
 }
 
 function selectedInputFormat(inputFormat: InputFormat | undefined): InputFormat | undefined {
@@ -183,6 +216,10 @@ function extractAutoCandidatesFromRecord(record: Record<string, unknown>, source
       .map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "sub2api"));
   }
 
+  if (inputFormat === "grok") {
+    return grokRecords(record).map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "grok"));
+  }
+
   return [candidateFromRecord(record, source, index, inputFormat)];
 }
 
@@ -199,6 +236,8 @@ function candidateRecordsForFormat(input: unknown, inputFormat: InputFormat): Re
       return sub2ApiRecords(input);
     case "cpa":
       return recordList(input).filter(isCpaRecord);
+    case "grok":
+      return grokRecords(input);
     case "codexmanager":
       return recordList(input).filter(isCodexManagerRecord);
     case "codex2api":
@@ -243,9 +282,36 @@ function isSub2ApiAccountRecord(record: Record<string, unknown>): boolean {
 
 function isCpaRecord(record: Record<string, unknown>): boolean {
   return (
-    record.type === "codex" &&
+    (record.type === "codex" || record.type === "xai") &&
     Boolean(firstString([record], ["access_token", "refresh_token", "session_token", "id_token"]))
   );
+}
+
+function isGrokAuthRecord(record: Record<string, unknown>): boolean {
+  const entries = Object.entries(record);
+  return entries.length > 0 && entries.every(([key, value]) => (
+    key.startsWith(`${XAI_ISSUER}::`) && isRecord(value) &&
+    (typeof value.key === "string" || typeof value.refresh_token === "string")
+  ));
+}
+
+function grokRecords(input: unknown): Record<string, unknown>[] {
+  if (!isRecord(input)) {
+    return [];
+  }
+  if (!isGrokAuthRecord(input)) {
+    return hasXaiJwt(input) || input.type === "xai" ? [input] : [];
+  }
+  return Object.entries(input).map(([authKey, value]) => ({
+    ...(value as Record<string, unknown>),
+    auth_key: authKey,
+  }));
+}
+
+function hasXaiJwt(record: Record<string, unknown>): boolean {
+  const accessClaims = decodeJwtPayload(firstString([record], ["access_token", "accessToken", "key"]));
+  const idClaims = decodeJwtPayload(firstString([record], ["id_token", "idToken"]));
+  return claimString(accessClaims, "iss") === XAI_ISSUER || claimString(idClaims, "iss") === XAI_ISSUER;
 }
 
 function isCodexManagerRecord(record: Record<string, unknown>): boolean {
@@ -332,7 +398,7 @@ function normalizeCandidate(
 ): NormalizedAccount | undefined {
   const messages = messagesFor(options.locale ?? DEFAULT_LOCALE).normalize;
   const { records } = candidate;
-  const accessToken = firstString(records, ["access_token", "accessToken"]);
+  const accessToken = firstString(records, ["access_token", "accessToken", "key"]);
   const refreshToken = firstString(records, ["refresh_token", "refreshToken"]);
   const sessionToken = firstString(records, ["session_token", "sessionToken"]);
   let idToken = firstString(records, ["id_token", "idToken"]);
@@ -351,6 +417,11 @@ function normalizeCandidate(
     .filter((claims): claims is Record<string, unknown> => claims !== undefined);
   const claims = accessClaims ?? idClaims;
   const warnings: string[] = [];
+  const structureProvider = providerFromStructure(candidate, records);
+  const jwtProvider = providerFromIssuer(
+    claimString(accessClaims, "iss") ?? claimString(idClaims, "iss"),
+  );
+  const provider = structureProvider ?? jwtProvider ?? "unknown";
 
   const accessAuthClaims = openAIAuthClaims(accessClaims);
   const idAuthClaims = openAIAuthClaims(idClaims);
@@ -400,8 +471,10 @@ function normalizeCandidate(
   const recordIssuer = firstString(records, ["issuer", "iss"]);
   const issuer = preferClaimIdentity ? claimedIssuer ?? recordIssuer : recordIssuer ?? claimedIssuer;
   const audience = firstClaimStringArray(accessFirstClaimRecords, "aud");
-  const clientId = firstClaimString(accessFirstClaimRecords, ["client_id"]);
-  const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp");
+  const clientId = firstString(records, ["client_id", "clientId", "oidc_client_id"])
+    ?? firstClaimString(accessFirstClaimRecords, ["client_id"]);
+  const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp")
+    ?? firstClaimStringArray(accessFirstClaimRecords, "scope");
   const claimedNotBeforeNumber = firstClaimNumber(accessFirstClaimRecords, "nbf");
   const notBefore = normalizeTimeValue(claimedNotBeforeNumber);
   const recordEmail = firstString(records, ["email", "email_address", "emailAddress"]);
@@ -489,6 +562,7 @@ function normalizeCandidate(
   }
 
   const sanityFields = claimSanityFields({
+    provider,
     issuer: claimedIssuer,
     audience,
     notBefore: claimedNotBeforeNumber,
@@ -506,7 +580,7 @@ function normalizeCandidate(
   if (idToken && idTokenSynthetic) {
     idToken = applySyntheticIdTokenSignature(idToken);
   }
-  if (!idToken) {
+  if (!idToken && provider === "openai") {
     const syntheticClaims = buildSyntheticClaims({
       claims,
       email,
@@ -522,20 +596,11 @@ function normalizeCandidate(
     if (syntheticClaims) {
       idToken = createSyntheticIdToken(syntheticClaims);
       idTokenSynthetic = true;
-      warnings.push(messages.syntheticIdToken(candidate.sourceName));
-    } else {
-      warnings.push(messages.missingIdToken(candidate.sourceName));
     }
   }
 
-  if (!refreshToken) {
-    warnings.push(messages.missingRefreshToken(candidate.sourceName));
-  }
-  if (!accessToken) {
-    warnings.push(messages.missingAccessToken(candidate.sourceName));
-  }
-
   return {
+    provider,
     accessToken,
     refreshToken,
     idToken,
@@ -557,6 +622,17 @@ function normalizeCandidate(
     planType,
     lastRefresh,
     expiresAt,
+    issuedAt: claimedLastRefresh,
+    tokenType: firstString(records, ["token_type", "tokenType"]),
+    expiresIn: firstNumber(records, ["expires_in", "expiresIn"]),
+    principalId: firstString(records, ["principal_id", "principalId"]),
+    principalType: firstString(records, ["principal_type", "principalType"]),
+    createTime: firstString(records, ["create_time", "createTime"]),
+    baseUrl: firstString(records, ["base_url", "baseUrl"]),
+    tokenEndpoint: firstString(records, ["token_endpoint", "tokenEndpoint"]),
+    redirectUri: firstString(records, ["redirect_uri", "redirectUri"]),
+    headers: firstStringRecord(records, "headers"),
+    disabled: firstBoolean(records, ["disabled"]),
     sourceName: candidate.sourceName,
     sourcePath: candidate.sourcePath || `${candidate.sourceName}#${index + 1}`,
     warnings,
@@ -582,9 +658,7 @@ export type DedupeAccountsResult = {
   affectedIndex: number | undefined;
 };
 
-/**
- * 凭据字段逐项兼容时去重：两边都有值就必须相等，缺失不算冲突。
- */
+/** 真实凭据逐项兼容时去重；元数据和身份字段不参与。 */
 export function dedupeAccounts(accounts: NormalizedAccount[]): NormalizedAccount[] {
   return dedupeAccountsWithAffectedIndex(accounts).accounts;
 }
@@ -596,25 +670,16 @@ export function dedupeAccountsWithAffectedIndex(
   const result: NormalizedAccount[] = [];
   let firstAffectedAccount: NormalizedAccount | undefined;
   for (const [inputIndex, account] of accounts.entries()) {
-    const existingAccounts = result.filter((existing) => hasCompatibleCredentials(existing, account));
-    const existing = existingAccounts[0];
-    if (existing) {
+    const credentialMatches = result.filter((existing) => hasCompatibleCredentials(existing, account));
+    if (credentialMatches.length === 1) {
+      const existing = credentialMatches[0];
+      mergeMissingAccountFields(existing, account);
       if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
         firstAffectedAccount = existing;
       }
-      for (const duplicate of existingAccounts.slice(1)) {
-        mergeMissingAccountFields(existing, duplicate);
-        if (duplicate === firstAffectedAccount) {
-          firstAffectedAccount = existing;
-        }
-        const index = result.indexOf(duplicate);
-        if (index >= 0) {
-          result.splice(index, 1);
-        }
-      }
-      mergeMissingAccountFields(existing, account);
       continue;
     }
+
     result.push(account);
     if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
       firstAffectedAccount = account;
@@ -628,6 +693,9 @@ export function dedupeAccountsWithAffectedIndex(
 }
 
 function hasCompatibleCredentials(left: NormalizedAccount, right: NormalizedAccount): boolean {
+  if (left.provider !== right.provider) {
+    return false;
+  }
   let hasSharedCredential = false;
   for (const key of DEDUPE_CREDENTIAL_KEYS) {
     const leftValue = dedupeCredentialValue(left, key);
@@ -719,6 +787,81 @@ function firstBoolean(records: Record<string, unknown>[], keys: string[]): boole
   return undefined;
 }
 
+function firstNumber(records: Record<string, unknown>[], keys: string[]): number | undefined {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+        return Number(value);
+      }
+    }
+  }
+  return undefined;
+}
+
+function firstStringRecord(records: Record<string, unknown>[], key: string): Record<string, string> | undefined {
+  for (const record of records) {
+    const value = record[key];
+    if (!isRecord(value)) {
+      continue;
+    }
+    const entries = Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+    return Object.fromEntries(entries);
+  }
+  return undefined;
+}
+
+function providerFromIssuer(issuer: string | undefined): "openai" | "xai" | undefined {
+  if (issuer === XAI_ISSUER) {
+    return "xai";
+  }
+  if (issuer === OPENAI_ISSUER) {
+    return "openai";
+  }
+  return undefined;
+}
+
+function providerFromStructure(candidate: Candidate, records: Record<string, unknown>[]): "openai" | "xai" | undefined {
+  if (candidate.inputFormat === "grok") {
+    return "xai";
+  }
+  const platform = firstString(records, ["platform"]);
+  const type = firstString(records, ["type"]);
+  const issuer = firstString(records, ["oidc_issuer", "issuer"]);
+  const tokenEndpoint = firstString(records, ["token_endpoint", "tokenEndpoint"]);
+  const openAiAccountId = firstString(records, [
+    "account_id",
+    "accountId",
+    "chatgpt_account_id",
+    "chatgptAccountId",
+    "chatgpt_user_id",
+    "chatgptUserId",
+  ]);
+  if (
+    type === "xai" ||
+    platform === "grok" ||
+    issuer === XAI_ISSUER ||
+    tokenEndpoint === `${XAI_ISSUER}/oauth2/token`
+  ) {
+    return "xai";
+  }
+  if (
+    type === "codex" ||
+    platform === "openai" ||
+    Boolean(openAiAccountId) ||
+    candidate.inputFormat === "session" ||
+    candidate.inputFormat === "codex" ||
+    candidate.inputFormat === "codexmanager" ||
+    candidate.inputFormat === "codex2api"
+  ) {
+    return "openai";
+  }
+  return undefined;
+}
+
 function firstClaimString(records: Record<string, unknown>[], keys: string[]): string | undefined {
   for (const record of records) {
     const value = firstString([record], keys);
@@ -772,16 +915,22 @@ function splitChatGptAccountUserId(value: string | undefined): { accountId: stri
 }
 
 function claimSanityFields(input: {
+  provider: "openai" | "xai" | "unknown";
   issuer?: string;
   audience?: string[];
   notBefore?: number;
   expiresAt?: number;
 }): string[] {
   const fields: string[] = [];
-  if (input.issuer && input.issuer !== "https://auth.openai.com") {
+  const expectedIssuer = input.provider === "xai"
+    ? XAI_ISSUER
+    : input.provider === "openai"
+      ? OPENAI_ISSUER
+      : undefined;
+  if (expectedIssuer && input.issuer && input.issuer !== expectedIssuer) {
     fields.push("iss");
   }
-  if (input.audience && !input.audience.includes("https://api.openai.com/v1")) {
+  if (input.provider === "openai" && input.audience && !input.audience.includes("https://api.openai.com/v1")) {
     fields.push("aud");
   }
   if (input.notBefore !== undefined && input.expiresAt !== undefined && input.notBefore > input.expiresAt) {

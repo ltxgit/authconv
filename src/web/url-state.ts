@@ -8,6 +8,7 @@ export type WebOutputOptions = {
   outputModes: OutputModes;
   previewFormat: OutputFormat;
   allowSyntheticIdToken?: boolean;
+  includeRefreshToken?: boolean;
   locale?: Locale;
 };
 
@@ -17,12 +18,13 @@ const URL_KEYS = {
   mode: "mode",
   preview: "preview",
   fakeid: "fakeid",
+  refresh: "refresh",
   lang: "lang",
 } as const;
 const NO_FORMATS = "none";
 
 const OUTPUT_FORMATS = new Set<OutputFormat>(ALL_FORMATS);
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
+const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 
 export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptions> {
   const params = new URLSearchParams(search);
@@ -32,6 +34,7 @@ export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptio
   const previewFormat = parseFormat(params.get(URL_KEYS.preview));
   const fakeidVal = params.get(URL_KEYS.fakeid);
   const allowSyntheticIdToken = fakeidVal === null ? undefined : fakeidVal !== "false";
+  const includeRefreshToken = parseBooleanParam(params.get(URL_KEYS.refresh));
   const locale = normalizeLocale(params.get(URL_KEYS.lang));
   return {
     ...(selectedFormats ? { selectedFormats } : {}),
@@ -39,6 +42,7 @@ export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptio
     ...(Object.keys(outputModes).length > 0 ? { outputModes } : {}),
     ...(previewFormat ? { previewFormat } : {}),
     ...(allowSyntheticIdToken !== undefined ? { allowSyntheticIdToken } : {}),
+    ...(includeRefreshToken !== undefined ? { includeRefreshToken } : {}),
     ...(locale ? { locale } : {}),
   };
 }
@@ -55,12 +59,27 @@ export function outputOptionsUrl(href: string, options: WebOutputOptions): strin
   } else {
     url.searchParams.delete(URL_KEYS.fakeid);
   }
+  if (options.includeRefreshToken === false) {
+    url.searchParams.set(URL_KEYS.refresh, "false");
+  } else {
+    url.searchParams.delete(URL_KEYS.refresh);
+  }
   if (options.locale) {
     url.searchParams.set(URL_KEYS.lang, options.locale);
   } else {
     url.searchParams.delete(URL_KEYS.lang);
   }
   return url.toString();
+}
+
+function parseBooleanParam(value: string | null): boolean | undefined {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  return undefined;
 }
 
 function parseFormats(value: string | null): OutputFormat[] | undefined {
@@ -109,7 +128,7 @@ function outputModesParam(outputModes: OutputModes): string {
     .join(",");
 }
 
-function isModeFormat(value: string): value is "sub2api" | "codex2api" {
+function isModeFormat(value: string): value is "sub2api" | "codex2api" | "grok" {
   return MODE_FORMATS.has(value as OutputFormat);
 }
 

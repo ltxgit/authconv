@@ -4,6 +4,7 @@ import {
   buildOutputPlan,
   detectInputFormat,
   effectiveOutputModes,
+  filterAccountsForFormats,
   normalizeInput,
   parseInputPayload,
   parseInputPayloadWithMeta,
@@ -26,7 +27,277 @@ async function normalizeChatGptSessionFixture() {
   });
 }
 
+async function normalizeGrokOidcFixture() {
+  const input = await readFixtureJson("grok-oidc.json");
+  return normalizeInput(input, {
+    sourceName: "grok-oidc.json",
+    sourcePath: "tests/fixtures/grok-oidc.json",
+  });
+}
+
 describe("authconv core", () => {
+  it("normalizes an xAI OIDC token bundle without carrying device-flow state", () => {
+    const accessToken = fakeJwt({
+      iss: "https://auth.x.ai",
+      aud: "b1a00492-073a-47ea-816f-4c329264a828",
+      sub: "xai-user-1",
+      client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+      scope: "openid profile email offline_access grok-cli:access api:access",
+      iat: 1783789218,
+      exp: 1783810818,
+    });
+    const idToken = fakeJwt({
+      iss: "https://auth.x.ai",
+      aud: "b1a00492-073a-47ea-816f-4c329264a828",
+      sub: "xai-user-1",
+      email: "grok@example.com",
+      iat: 1783789218,
+      exp: 1783810818,
+    });
+
+    const result = normalizeInput({
+      access_token: accessToken,
+      refresh_token: "xai-refresh-token",
+      id_token: idToken,
+      token_type: "Bearer",
+      expires_in: 21600,
+      scope: "openid profile email offline_access grok-cli:access api:access",
+      user_code: "one-time-user-code",
+      device_response: { device_code: "one-time-device-code" },
+    }, { sourceName: "oidc.json", sourcePath: "oidc.json" });
+
+    expect(detectInputFormat({ access_token: accessToken, refresh_token: "xai-refresh-token" })).toBe("grok");
+    expect(result.accounts).toHaveLength(1);
+    expect(result.accounts[0]).toMatchObject({
+      provider: "xai",
+      accessToken,
+      refreshToken: "xai-refresh-token",
+      idToken,
+      email: "grok@example.com",
+      userId: "xai-user-1",
+      issuer: "https://auth.x.ai",
+      clientId: "b1a00492-073a-47ea-816f-4c329264a828",
+      tokenType: "Bearer",
+      expiresIn: 21600,
+      issuedAt: "2026-07-11T17:00:18.000Z",
+      expiresAt: "2026-07-11T23:00:18.000Z",
+    });
+    expect(result.accounts[0]).not.toHaveProperty("deviceResponse");
+    expect(result.accounts[0]).not.toHaveProperty("userCode");
+  });
+
+  it("normalizes every account in a merged Grok CLI auth.json", () => {
+    const input = {
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828::user-1": {
+        key: "access-1",
+        auth_mode: "oidc",
+        create_time: "2026-07-11T21:00:18.000000000Z",
+        user_id: "user-1",
+        email: "one@example.com",
+        principal_type: "User",
+        principal_id: "user-1",
+        refresh_token: "refresh-1",
+        expires_at: "2026-07-12T03:00:18.000000000Z",
+        oidc_issuer: "https://auth.x.ai",
+        oidc_client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+      },
+      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828::user-2": {
+        key: "access-2",
+        user_id: "user-2",
+        refresh_token: "refresh-2",
+        oidc_issuer: "https://auth.x.ai",
+        oidc_client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+      },
+    };
+
+    expect(detectInputFormat(input)).toBe("grok");
+    const accounts = normalizeInput(input, { sourceName: "auth.json", sourcePath: "auth.json" }).accounts;
+    expect(accounts).toHaveLength(2);
+    expect(accounts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "xai", accessToken: "access-1", refreshToken: "refresh-1", userId: "user-1" }),
+      expect.objectContaining({ provider: "xai", accessToken: "access-2", refreshToken: "refresh-2", userId: "user-2" }),
+    ]));
+  });
+
+  it("recognizes xAI accounts in CPA and mixed Sub2API exports", () => {
+    const cpa = normalizeInput({
+      type: "xai",
+      auth_kind: "oauth",
+      access_token: "xai-access",
+      refresh_token: "xai-refresh",
+      email: "xai@example.com",
+      sub: "xai-sub",
+      base_url: "https://cli-chat-proxy.grok.com/v1",
+      token_endpoint: "https://auth.x.ai/oauth2/token",
+      redirect_uri: "http://127.0.0.1:56121/callback",
+      disabled: false,
+      headers: { "x-xai-token-auth": "xai-grok-cli" },
+    }, { sourceName: "xai.json", sourcePath: "xai.json" }).accounts[0];
+
+    const mixed = normalizeInput({
+      type: "sub2api-data",
+      accounts: [
+        { platform: "openai", type: "oauth", credentials: { access_token: "openai-access" } },
+        { platform: "grok", type: "oauth", credentials: { access_token: "grok-access", refresh_token: "grok-refresh", client_id: "b1a00492-073a-47ea-816f-4c329264a828" } },
+      ],
+    }, { sourceName: "sub2api.json", sourcePath: "sub2api.json" }).accounts;
+
+    expect(cpa).toMatchObject({
+      provider: "xai",
+      userId: "xai-sub",
+      baseUrl: "https://cli-chat-proxy.grok.com/v1",
+      tokenEndpoint: "https://auth.x.ai/oauth2/token",
+      redirectUri: "http://127.0.0.1:56121/callback",
+      disabled: false,
+      headers: { "x-xai-token-auth": "xai-grok-cli" },
+    });
+    expect(mixed.map((account) => account.provider)).toEqual(["openai", "xai"]);
+  });
+
+  it("rejects an xAI structure whose JWT belongs to OpenAI", () => {
+    const result = normalizeInput({
+      type: "xai",
+      access_token: fakeJwt({
+        iss: "https://auth.openai.com",
+        aud: "https://api.openai.com/v1",
+        exp: 4102444800,
+      }),
+      refresh_token: "refresh-token",
+    }, { sourceName: "conflict.json", sourcePath: "conflict.json" });
+
+    expect(result.accounts).toHaveLength(0);
+    expect(result.rejections.join("\n")).toContain("平台冲突");
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("preserves a non-default xAI OAuth client instead of rejecting the account", () => {
+    const result = normalizeInput({
+      access_token: fakeJwt({
+        iss: "https://auth.x.ai",
+        aud: "another-client",
+        client_id: "another-client",
+        sub: "xai-user",
+      }),
+      refresh_token: "refresh-token",
+    }, { sourceName: "other-client.json", sourcePath: "other-client.json" });
+
+    expect(result.accounts).toHaveLength(1);
+    expect(result.rejections).toEqual([]);
+    expect(result.accounts[0]).toMatchObject({ provider: "xai", clientId: "another-client" });
+    expect(result.warnings).toEqual([]);
+    expect(renderFormat(result.accounts, "grok")).toHaveProperty("https://auth.x.ai::another-client");
+  });
+
+  it("keeps opaque credentials unknown unless provider evidence exists", () => {
+    const unknown = normalizeInput(
+      { access_token: "opaque-token" },
+      { sourceName: "unknown.json", sourcePath: "unknown.json" },
+    );
+    const xai = normalizeInput(
+      { refresh_token: "refresh-token", token_endpoint: "https://auth.x.ai/oauth2/token" },
+      { sourceName: "xai.json", sourcePath: "xai.json" },
+    );
+
+    expect(unknown.accounts[0].provider).toBe("unknown");
+    expect(buildOutputPlan(unknown.accounts, ["cpa", "sub2api", "codex", "grok"])).toEqual([]);
+    expect(xai.accounts[0].provider).toBe("xai");
+  });
+
+  it("does not warn for expired credentials", () => {
+    const result = normalizeInput({
+      access_token: fakeJwt({
+        iss: "https://auth.x.ai",
+        exp: 1,
+        client_id: "another-client",
+      }),
+      refresh_token: "refresh-token",
+    }, { sourceName: "expired.json", sourcePath: "expired.json" });
+
+    expect(result.accounts).toHaveLength(1);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("renders the Grok OIDC fixture exactly for every applicable contract", async () => {
+    const account = (await normalizeGrokOidcFixture()).accounts[0];
+
+    expect(renderFormat([account], "cpa")).toEqual(await readFixtureJson("expected/cpa-xai.json"));
+    expect(renderFormat([account], "sub2api", { now: new Date("2026-07-12T00:00:00.000Z") })).toEqual(
+      await readFixtureJson("expected/sub2api-grok.json"),
+    );
+    expect(renderFormat([account], "grok")).toEqual(await readFixtureJson("expected/grok.json"));
+  });
+
+  it("does not synthesize CPA or Sub2API defaults already owned by consumers", () => {
+    const account = normalizeInput({
+      issuer: "https://auth.x.ai",
+      access_token: "opaque-access-token",
+      refresh_token: "refresh-token",
+    }, { sourceName: "oidc.json", sourcePath: "oidc.json" }).accounts[0];
+
+    const cpa = renderFormat([account], "cpa") as Record<string, unknown>;
+    expect(cpa).toMatchObject({
+      type: "xai",
+      access_token: "opaque-access-token",
+      refresh_token: "refresh-token",
+    });
+    expect(cpa).not.toHaveProperty("auth_kind");
+    expect(cpa).not.toHaveProperty("base_url");
+    expect(cpa).not.toHaveProperty("token_endpoint");
+    expect(cpa).not.toHaveProperty("redirect_uri");
+    expect(cpa).not.toHaveProperty("headers");
+
+    const sub2api = renderFormat([account], "sub2api").accounts[0];
+    expect(sub2api.credentials).toEqual({
+      access_token: "opaque-access-token",
+      refresh_token: "refresh-token",
+    });
+    expect(sub2api.credentials).not.toHaveProperty("chatgpt_account_id");
+    expect(sub2api.credentials).not.toHaveProperty("chatgpt_user_id");
+    expect(sub2api.credentials).not.toHaveProperty("plan_type");
+  });
+
+  it("filters mixed providers by output format and never plans empty files", () => {
+    const openai = normalizeInput(
+      { access_token: "openai-access", refresh_token: "openai-refresh", email: "openai@example.com" },
+      { sourceName: "openai.json", sourcePath: "openai.json" },
+    ).accounts[0];
+    const xai = normalizeInput(
+      { type: "xai", access_token: "xai-access", refresh_token: "xai-refresh", email: "grok@example.com", sub: "xai-user-1" },
+      { sourceName: "xai.json", sourcePath: "xai.json" },
+    ).accounts[0];
+
+    const files = buildOutputPlan(
+      [openai, xai],
+      ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok" as never],
+    );
+
+    expect(files.filter((file) => file.format === "cpa")).toHaveLength(2);
+    expect(files.find((file) => file.format === "sub2api")?.accountCount).toBe(2);
+    expect(files.find((file) => file.format === "codex2api")?.accountCount).toBe(1);
+    expect(files.filter((file) => file.format === "codexmanager")).toHaveLength(1);
+    expect(files.filter((file) => file.format === "codex")).toHaveLength(1);
+    expect(files.find((file) => (file.format as string) === "grok")?.accountCount).toBe(1);
+  });
+
+  it("counts only accounts supported by at least one selected output format", () => {
+    const openai = normalizeInput(
+      { type: "codex", access_token: "openai-access" },
+      { sourceName: "openai.json", sourcePath: "openai.json" },
+    ).accounts[0];
+    const xai = normalizeInput(
+      { type: "xai", access_token: "xai-access" },
+      { sourceName: "xai.json", sourcePath: "xai.json" },
+    ).accounts[0];
+    const unknown = normalizeInput(
+      { access_token: "opaque-access" },
+      { sourceName: "unknown.json", sourcePath: "unknown.json" },
+    ).accounts[0];
+
+    expect(filterAccountsForFormats([openai, xai, unknown], ["codex"])).toEqual([openai]);
+    expect(filterAccountsForFormats([openai, xai, unknown], ["cpa"])).toEqual([openai, xai]);
+    expect(filterAccountsForFormats([openai, xai, unknown], ["codex", "grok"])).toEqual([openai, xai]);
+  });
+
   it("parses multiple JSON documents as an array without splitting by line", () => {
     const input = [
       JSON.stringify({ access_token: "a", email: "a@example.com" }, null, 2),
@@ -365,9 +636,8 @@ describe("authconv core", () => {
     });
     expect(result.warnings).toEqual(expect.arrayContaining([
       "session.json: access_token claim 不一致，覆盖字段: account_id,chatgpt_user_id,plan_type,email,workspace_id,expires_at",
-      "session.json: 已生成合成 id_token",
-      "session.json: 缺少 refresh_token",
     ]));
+    expect(result.warnings).toHaveLength(1);
   });
 
   it("generates a marked synthetic id_token when claims can be derived", () => {
@@ -388,6 +658,8 @@ describe("authconv core", () => {
       },
       { sourceName: "stdin", sourcePath: "stdin" },
     ).accounts[0];
+
+    expect(account.warnings).toEqual([]);
 
     expect(account.idTokenSynthetic).toBe(true);
     expect(account.idToken).toMatch(/^[^.]+\.[^.]+\.[^.]+$/);
@@ -487,6 +759,55 @@ describe("authconv core", () => {
       tokens: Record<string, unknown>;
     };
     expect(codexManagerWithoutSynthetic.tokens).not.toHaveProperty("id_token");
+  });
+
+  it("omits refresh_token from every output format without removing it from normalized accounts", () => {
+    const openAiAccount = normalizeInput(
+      {
+        type: "codex",
+        access_token: "openai-access-token",
+        refresh_token: "openai-refresh-token",
+        email: "openai@example.com",
+      },
+      { sourceName: "openai.json", sourcePath: "openai.json" },
+    ).accounts[0];
+    const xaiAccount = normalizeInput(
+      {
+        type: "xai",
+        access_token: "xai-access-token",
+        refresh_token: "xai-refresh-token",
+        email: "xai@example.com",
+        sub: "xai-user",
+      },
+      { sourceName: "xai.json", sourcePath: "xai.json" },
+    ).accounts[0];
+
+    const files = [
+      ...buildOutputPlan(
+        [openAiAccount],
+        ["cpa", "sub2api", "codex2api", "codexmanager", "codex"],
+        { includeRefreshToken: false },
+      ),
+      ...buildOutputPlan(
+        [xaiAccount],
+        ["cpa", "sub2api", "grok"],
+        { includeRefreshToken: false },
+      ),
+    ];
+
+    expect(openAiAccount.refreshToken).toBe("openai-refresh-token");
+    expect(xaiAccount.refreshToken).toBe("xai-refresh-token");
+    expect(new Set(files.map((file) => file.format))).toEqual(new Set([
+      "cpa",
+      "sub2api",
+      "codex2api",
+      "codexmanager",
+      "codex",
+      "grok",
+    ]));
+    for (const file of files) {
+      expect(JSON.stringify(file.content), file.format).not.toContain('"refresh_token"');
+    }
   });
 
   it("signs existing synthetic id_token and can suppress it at render time", () => {
@@ -695,6 +1016,7 @@ describe("authconv core", () => {
       "codex2api",
       "codexmanager",
       "codex",
+      "grok",
     ]);
   });
 
@@ -893,6 +1215,7 @@ describe("authconv core", () => {
     const accounts = [
       normalizeInput(
         {
+          type: "codex",
           access_token: "token-a",
           email: "a@example.com",
         },
@@ -900,6 +1223,7 @@ describe("authconv core", () => {
       ).accounts[0],
       normalizeInput(
         {
+          type: "codex",
           access_token: "token-a",
           refresh_token: "refresh-a",
           session_token: "session-a",
@@ -932,6 +1256,44 @@ describe("authconv core", () => {
     expect(deduped).toHaveLength(2);
   });
 
+  it("keeps distinct OpenAI users that share a chatgpt_account_id", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const input = await readFixtureJson("sub2api-shared-account-id.json");
+
+    const normalized = normalizeInput(input, {
+      sourceName: "shared-workspace.json",
+      sourcePath: "shared-workspace.json",
+    }).accounts;
+
+    const deduped = dedupeAccounts(normalized);
+    const [file] = buildOutputPlan(deduped, ["sub2api"]);
+    const output = file.content as {
+      accounts: Array<{ credentials: { email?: string } }>;
+    };
+
+    expect(normalized).toHaveLength(11);
+    expect(deduped).toHaveLength(11);
+    expect(file.accountCount).toBe(11);
+    expect(output.accounts).toHaveLength(11);
+    expect(output.accounts.map((account) => account.credentials.email)).toEqual(
+      Array.from({ length: 11 }, (_, index) => `user-${index + 1}@example.com`),
+    );
+  });
+
+  it("never dedupes credentials across OpenAI and xAI providers", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const openai = normalizeInput(
+      { access_token: "shared-token", email: "same@example.com" },
+      { sourceName: "openai.json", sourcePath: "openai.json" },
+    ).accounts[0];
+    const xai = normalizeInput(
+      { type: "xai", access_token: "shared-token", email: "same@example.com" },
+      { sourceName: "xai.json", sourcePath: "xai.json" },
+    ).accounts[0];
+
+    expect(dedupeAccounts([openai, xai])).toHaveLength(2);
+  });
+
   it("does not dedupe accounts without any shared credential field", async () => {
     const { dedupeAccounts } = await import("../src/index.js");
     const accounts = [
@@ -942,7 +1304,7 @@ describe("authconv core", () => {
     expect(deduped).toHaveLength(2);
   });
 
-  it("dedupes accounts through a later bridge credential", async () => {
+  it("keeps all accounts when a later credential bridges conflicting groups", async () => {
     const { dedupeAccounts } = await import("../src/index.js");
     const accounts = [
       normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
@@ -950,17 +1312,20 @@ describe("authconv core", () => {
       normalizeInput({ refresh_token: "refresh-token", session_token: "session-token" }, { sourceName: "bridge.json", sourcePath: "bridge.json" }).accounts[0],
     ];
     const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(1);
-    expect(deduped[0].email).toBe("refresh-only@example.com");
-    expect(deduped[0].sessionToken).toBe("session-token");
+    expect(deduped).toHaveLength(3);
+    expect(deduped.map((account) => account.sourceName)).toEqual([
+      "refresh.json",
+      "session.json",
+      "bridge.json",
+    ]);
   });
 
   it("reports the existing row affected by a duplicate import", async () => {
     const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
     const accounts = [
-      normalizeInput({ access_token: "token-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
+      normalizeInput({ type: "codex", access_token: "token-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
       normalizeInput({ access_token: "token-b", email: "b@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
-      normalizeInput({ access_token: "token-a", refresh_token: "refresh-a" }, { sourceName: "duplicate.json", sourcePath: "duplicate.json" }).accounts[0],
+      normalizeInput({ type: "codex", access_token: "token-a", refresh_token: "refresh-a" }, { sourceName: "duplicate.json", sourcePath: "duplicate.json" }).accounts[0],
     ];
 
     const result = dedupeAccountsWithAffectedIndex(accounts, 2);
@@ -970,7 +1335,7 @@ describe("authconv core", () => {
     expect(result.accounts[0].refreshToken).toBe("refresh-a");
   });
 
-  it("reports the retained row affected by a bridge import", async () => {
+  it("reports the new row affected by a bridge import that cannot be merged safely", async () => {
     const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
     const accounts = [
       normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
@@ -980,18 +1345,40 @@ describe("authconv core", () => {
 
     const result = dedupeAccountsWithAffectedIndex(accounts, 2);
 
-    expect(result.accounts).toHaveLength(1);
-    expect(result.affectedIndex).toBe(0);
-    expect(result.accounts[0].sessionToken).toBe("session-token");
+    expect(result.accounts).toHaveLength(3);
+    expect(result.affectedIndex).toBe(2);
+    expect(result.accounts[2].sourceName).toBe("bridge.json");
+  });
+
+  it("does not dedupe an xAI identity after its credentials rotate", async () => {
+    const { dedupeAccounts } = await import("../src/index.js");
+    const older = normalizeInput({
+      type: "xai",
+      access_token: "old-access",
+      refresh_token: "old-refresh",
+      sub: "same-user",
+      last_refresh: "2026-07-01T00:00:00.000Z",
+    }, { sourceName: "older.json", sourcePath: "older.json" }).accounts[0];
+    const newer = normalizeInput({
+      type: "xai",
+      access_token: "new-access",
+      refresh_token: "new-refresh",
+      sub: "same-user",
+      last_refresh: "2026-07-02T00:00:00.000Z",
+    }, { sourceName: "newer.json", sourcePath: "newer.json" }).accounts[0];
+
+    expect(dedupeAccounts([older, newer])).toHaveLength(2);
   });
 
   it("replaces a compatible synthetic id_token with a real id_token", async () => {
     const { dedupeAccounts } = await import("../src/index.js");
     const synthetic = normalizeInput({
+      type: "codex",
       access_token: "same-access",
       email: "same@example.com",
     }, { sourceName: "synthetic.json", sourcePath: "synthetic.json" }).accounts[0];
     const real = normalizeInput({
+      type: "codex",
       access_token: "same-access",
       id_token: fakeJwt({ email: "same@example.com" }),
       email: "same@example.com",

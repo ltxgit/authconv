@@ -2,21 +2,33 @@ import { isRecord } from "./object.js";
 
 const SYNTHETIC_ID_TOKEN_PLACEHOLDER_SIGNATURE = base64urlEncode("lanv_authconv");
 
-export function decodeJwtPayload(token: string | undefined): Record<string, unknown> | undefined {
+export type DecodedJwtParts = {
+  header: Record<string, unknown>;
+  payload: Record<string, unknown>;
+};
+
+export function decodeJwtParts(token: string | undefined): DecodedJwtParts | undefined {
   if (!token) {
     return undefined;
   }
   const parts = token.split(".");
-  if (parts.length < 2 || !parts[1]) {
+  if (parts.length !== 3 || !parts[0] || !parts[1]) {
     return undefined;
   }
   try {
-    const text = base64urlDecode(parts[1]);
-    const parsed: unknown = JSON.parse(text);
-    return isRecord(parsed) ? parsed : undefined;
+    const header: unknown = JSON.parse(base64urlDecode(parts[0]));
+    const payload: unknown = JSON.parse(base64urlDecode(parts[1]));
+    if (!isRecord(header) || !isRecord(payload)) {
+      return undefined;
+    }
+    return { header, payload };
   } catch {
     return undefined;
   }
+}
+
+export function decodeJwtPayload(token: string | undefined): Record<string, unknown> | undefined {
+  return decodeJwtParts(token)?.payload;
 }
 
 export function createSyntheticIdToken(

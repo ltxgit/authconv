@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GPT Auth Converter | Local credential format converter</title>
+    <title>Auth Converter | Local OAuth credential converter</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23115e59' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2' ry='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3Cpath d='M12 15v3'/%3E%3Ccircle cx='12' cy='15' r='1.5'/%3E%3C/svg%3E" />
     <style>:root,
 html[data-theme="light"] {
@@ -1038,51 +1038,6 @@ h2 {
   transform: rotate(45deg) translate(-0.5px, -1px);
 }
 
-.text-mode-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  height: 34px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-soft);
-  padding: 2px;
-  box-shadow: var(--shadow-sm);
-}
-
-.text-mode-tab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 58px;
-  height: 28px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-strong);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.text-mode-tab:hover {
-  color: var(--accent-strong);
-}
-
-.text-mode-tab.active {
-  background: var(--panel-strong);
-  color: var(--accent);
-  box-shadow: var(--shadow-sm);
-}
-
-html[data-theme="light"] .text-mode-tab.active {
-  color: var(--accent-strong);
-}
-
 /* Textarea input beautification */
 .editor-container {
   position: relative;
@@ -1381,23 +1336,41 @@ textarea:focus-within {
 }
 
 .format-options {
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(142px, 168px));
+  align-items: stretch;
   gap: 8px;
+  width: min(100%, 920px);
 }
 
 .format-option {
   position: relative;
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  min-width: 0;
+  min-height: 66px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel-strong);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  height: 32px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
   box-sizing: border-box;
   cursor: pointer;
+  overflow: hidden;
+  transition-property: transform, background-color, border-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.format-option-label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 13px 10px;
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
 }
 
 .format-option input[type="checkbox"] {
@@ -1412,76 +1385,129 @@ textarea:focus-within {
 }
 
 .format-option:focus-within {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
+  outline-offset: 2px;
 }
 
-.format-option:hover {
-  border-color: var(--accent);
+@media (hover: hover) {
+  .format-option:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+    background: color-mix(in srgb, var(--panel-strong) 88%, var(--accent-soft));
+  }
 }
 
 .format-option:has(input:checked) {
   border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  box-shadow: 0 0 8px var(--accent-glow);
+  background: color-mix(in srgb, var(--panel-strong) 82%, var(--accent-soft));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.format-option-label {
+.format-option:has(input:checked)::after {
+  content: "✓";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 32%, transparent);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.format-option:has(input:checked) .format-option-label {
+  padding-right: 34px;
+}
+
+.format-option-name {
+  max-width: 100%;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1.1;
+  letter-spacing: -0.012em;
+  white-space: nowrap;
+}
+
+.format-platforms {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 16px;
+}
+
+.platform-mark {
   display: inline-flex;
   align-items: center;
-  padding: 0 12px;
-  height: 100%;
-  pointer-events: none;
-  position: relative;
-  z-index: 1;
-  font-size: 12px;
-  font-weight: 700;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
 }
 
-.format-option:has(.format-mode-control) .format-option-label {
-  padding-right: 7px;
+.platform-mark.platform-mark-openai {
+  color: var(--accent);
+}
+
+.platform-mark.platform-mark-xai {
+  color: var(--text);
+}
+
+.platform-mark svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  flex: none;
+}
+
+.format-option:has(input:checked) .platform-mark {
+  color: var(--text-secondary);
 }
 
 .format-mode-control {
-  display: inline-flex;
-  align-items: stretch;
-  align-self: stretch;
-  position: relative;
+  position: absolute;
+  top: 8px;
+  right: 8px;
   z-index: 4;
 }
 
 .format-mode-button {
   display: inline-flex;
   align-items: center;
-  border: none;
-  border-left: 1px solid var(--line);
-  padding: 0 5px;
-  height: 100%;
-  min-width: 40px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--accent-strong);
-  background: var(--mode-button-bg);
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 7px;
+  padding: 0 6px;
+  height: 23px;
+  min-width: 42px;
+  font-size: 10px;
+  font-weight: 720;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--panel-strong) 92%, var(--accent-soft));
   cursor: pointer;
-  position: relative;
-  z-index: 4;
-  transition: all 0.15s;
   user-select: none;
   box-sizing: border-box;
+  transition-property: transform, background-color, color, border-color;
+  transition-duration: 120ms;
 }
 
 .format-mode-button::after {
-  content: " ⇄";
-  font-size: 12px;
-  font-weight: 800;
-  opacity: 1;
-  margin-left: 3px;
+  content: "";
 }
 
 .format-mode-button:hover {
-  background: var(--accent);
-  color: var(--accent-contrast);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .format-mode-button:focus-visible {
@@ -1490,7 +1516,7 @@ textarea:focus-within {
 }
 
 .format-mode-button:active {
-  transform: translateY(1px);
+  transform: scale(0.96);
 }
 
 .app-tooltip {
@@ -1551,7 +1577,7 @@ textarea:focus-within {
 .account-columns,
 .account-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.35fr) minmax(86px, 0.42fr) minmax(190px, 0.82fr) 68px;
+  grid-template-columns: minmax(180px, 1.25fr) minmax(110px, 0.55fr) minmax(190px, 0.82fr) 68px;
   gap: 16px;
   align-items: center;
 }
@@ -1595,7 +1621,9 @@ textarea:focus-within {
 
 .account-row.is-selectable {
   cursor: pointer;
-  transition: all 0.1s ease;
+  transition-property: background-color, color;
+  transition-duration: 100ms;
+  transition-timing-function: ease;
 }
 
 .account-row.is-selectable:hover {
@@ -1616,6 +1644,11 @@ textarea:focus-within {
   bottom: 0;
   width: 3px;
   background: var(--accent);
+}
+
+.account-expiry-cell.is-expired {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 .account-row.is-draft {
@@ -1765,6 +1798,141 @@ textarea:focus-within {
   white-space: normal;
   font-style: italic;
   box-shadow: none;
+}
+
+.jwt-token-hoverable {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--accent) 62%, transparent);
+  cursor: help;
+}
+
+.jwt-token-hoverable::after {
+  content: " JWT";
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 9px;
+  font-weight: 850;
+  vertical-align: super;
+  opacity: 0.72;
+}
+
+.jwt-token-hoverable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+@media (hover: hover) {
+  .jwt-token-hoverable:hover {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    box-shadow: inset 0 -1px 0 var(--accent);
+  }
+}
+
+.jwt-popover {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  width: min(540px, calc(100vw - 16px)); /* Larger default width */
+  height: min(380px, 60vh); /* Explicit default height */
+  min-width: 320px;
+  min-height: 200px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  resize: both; /* Allow resizing in both directions */
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  padding: 0;
+  overflow: hidden; /* Clips scrollbar corners and enables resize handle */
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  pointer-events: none;
+  transition-property: opacity, transform;
+  transition-duration: 160ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.jwt-popover[hidden] {
+  display: none;
+}
+
+.jwt-popover.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+.jwt-popover-body {
+  flex: 1 1 auto; /* Grow to fill resized container height */
+  height: 100%;
+  overflow: auto;
+  margin: 0;
+  border: none;
+  background: transparent;
+  padding: 10px 34px 10px 10px; /* Padding moved inside scrollable body */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "Fira Code", SFMono-Regular, Consolas, Menlo, Monaco, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.jwt-popover-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.jwt-popover-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.jwt-popover-body::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 3px;
+}
+
+.jwt-popover-body::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+.jwt-popover-copy {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.jwt-popover-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--panel-soft);
+}
+
+.jwt-popover-copy.copied {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jwt-popover {
+    transition: none;
+  }
 }
 
 .preview-decor {
@@ -1926,6 +2094,12 @@ html[data-theme="dark"] .editor-format-select {
   background: var(--badge-codex-bg);
   border-color: var(--badge-codex-line);
   color: var(--badge-codex-text);
+}
+
+.badge-grok {
+  background: rgba(124, 58, 237, 0.12);
+  border-color: rgba(124, 58, 237, 0.32);
+  color: rgb(109, 40, 217);
 }
 
 .badge-unknown {
@@ -2192,6 +2366,39 @@ html[data-theme="dark"] .editor-format-select {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Collapsible Panels */
+.collapsible-header {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: color 0.15s ease;
+}
+
+.collapsible-header:hover {
+  color: var(--accent) !important;
+}
+
+.chevron-icon {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 0.6;
+}
+
+.collapsible-header:hover .chevron-icon {
+  opacity: 1;
+}
+
+.result-header.is-collapsed .chevron-icon {
+  transform: rotate(-90deg);
+}
+
+#outputConfigArea.is-collapsed {
+  display: none !important;
+}
 </style>
   </head>
   <body>
@@ -2213,6 +2420,19 @@ html[data-theme="dark"] .editor-format-select {
       <span id="toastMessage"></span>
     </div>
 
+    <aside id="jwtPopover" class="jwt-popover" role="tooltip" hidden>
+      <button id="jwtPopoverCopy" class="jwt-popover-copy" type="button" aria-label="Copy decoded JWT">
+        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+          <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+      </button>
+      <pre id="jwtPopoverBody" class="jwt-popover-body"></pre>
+    </aside>
+
     <main class="shell">
       <header class="tool-header" aria-labelledby="page-title">
         <div class="title-stack">
@@ -2223,8 +2443,8 @@ html[data-theme="dark"] .editor-format-select {
               <path d="M12 15v3"></path>
               <circle cx="12" cy="15" r="1.5"></circle>
             </svg>
-            <h1 id="page-title">GPT Auth Converter</h1>
-            <span class="badge">v0.1.1.dev</span>
+            <h1 id="page-title">Auth Converter</h1>
+            <span class="badge">v0.2.0.dev</span>
           </div>
           <p class="notice" id="pageNotice">Local-only conversion. Everything runs in this browser.</p>
         </div>
@@ -2290,7 +2510,7 @@ html[data-theme="dark"] .editor-format-select {
               id="jsonInput"
               aria-label="JSON credential input"
               spellcheck="false"
-              placeholder='粘贴 ChatGPT Session、Codex auth.json、JSONL，或拖入多账号导出文件。
+              placeholder='粘贴 OpenAI / Grok OAuth JSON、JSONL，或拖入多账号导出文件。
 
 示例：
 {
@@ -2346,48 +2566,56 @@ html[data-theme="dark"] .editor-format-select {
             </div>
           </div>
 
-          <div class="output-toolbar" aria-label="Output settings">
-            <div class="toolbar-row options-row">
-              <span class="toolbar-label" id="outputOptionsLabel">Options</span>
-              <div class="options-group">
-                <label id="jsonlToggleContainer" class="option-toggle-container">
-                  <input id="jsonlToggle" class="custom-checkbox" type="checkbox" />
-                  <span id="jsonlToggleText">JSONL Format</span>
-                </label>
-                <label id="fakeIdToggleContainer" class="option-toggle-container">
-                  <input id="fakeIdToggle" class="custom-checkbox" type="checkbox" checked />
-                  <span id="fakeIdToggleText">Synthetic id_token</span>
-                </label>
-              </div>
-            </div>
-            <div class="toolbar-row export-row">
-              <span class="toolbar-label" id="exportFormatLabel">Export Formats</span>
-              <label class="select-all"><input id="selectAllFormats" type="checkbox" aria-label="Select all output formats" /></label>
-              <div id="formatChecks" class="chip-row format-options"></div>
-            </div>
-          </div>
+          <div id="outputConfigArea">
+            <div class="output-toolbar" aria-label="Output settings">
+              <div class="toolbar-row options-row">
+                <span class="toolbar-label" id="outputOptionsLabel">Options</span>
+                <div class="options-group">
+                  <label id="jsonlToggleContainer" class="option-toggle-container">
+                    <input id="jsonlToggle" class="custom-checkbox" type="checkbox" />
+                    <span id="jsonlToggleText">JSONL Format</span>
+                  </label>
 
-          <section id="accountSection" class="account-section" aria-labelledby="account-title" hidden>
-            <div class="account-head">
-              <div class="title-with-icon">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                <h3 id="account-title">Loaded Accounts</h3>
+                  <label id="fakeIdToggleContainer" class="option-toggle-container">
+                    <input id="fakeIdToggle" class="custom-checkbox" type="checkbox" checked />
+                    <span id="fakeIdToggleText">Synthetic id_token</span>
+                  </label>
+
+                  <label id="refreshTokenToggleContainer" class="option-toggle-container">
+                    <input id="refreshTokenToggle" class="custom-checkbox" type="checkbox" checked />
+                    <span id="refreshTokenToggleText">Include refresh_token</span>
+                  </label>
+                </div>
               </div>
-              <button id="clearAccountsButton" type="button" class="btn btn-text btn-sm clear-accounts-button" hidden>
-                <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                <span id="clearAccountsButtonText">Clear List</span>
-              </button>
-            </div>
-            <div class="grid-table-container">
-              <div class="account-columns" aria-hidden="true">
-                <span id="accountColumnIdentity">Account (Email / ID)</span>
-                <span id="accountColumnPlan">Plan</span>
-                <span id="accountColumnExpires">Expires At</span>
-                <span id="accountColumnAction" class="account-column-action">Action</span>
+              <div class="toolbar-row export-row">
+                <span class="toolbar-label" id="exportFormatLabel">Export Formats</span>
+                <label class="select-all"><input id="selectAllFormats" type="checkbox" aria-label="Select all output formats" /></label>
+                <div id="formatChecks" class="chip-row format-options"></div>
               </div>
-              <div id="accountRows" class="account-rows" role="listbox" aria-label="Account list"></div>
             </div>
-          </section>
+
+            <section id="accountSection" class="account-section" aria-labelledby="account-title" hidden>
+              <div class="account-head">
+                <div class="title-with-icon">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                  <h3 id="account-title">Loaded Accounts</h3>
+                </div>
+                <button id="clearAccountsButton" type="button" class="btn btn-text btn-sm clear-accounts-button" hidden>
+                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                  <span id="clearAccountsButtonText">Clear List</span>
+                </button>
+              </div>
+              <div class="grid-table-container">
+                <div class="account-columns" aria-hidden="true">
+                  <span id="accountColumnIdentity">Account (Email / ID)</span>
+                  <span id="accountColumnPlan">Plan</span>
+                  <span id="accountColumnExpires">Expires At</span>
+                  <span id="accountColumnAction" class="account-column-action">Action</span>
+                </div>
+                <div id="accountRows" class="account-rows" role="listbox" aria-label="Account list"></div>
+              </div>
+            </section>
+          </div>
 
           <section class="preview-section" aria-label="Output preview">
             <div class="preview-head">
@@ -2456,6 +2684,11 @@ html[data-theme="dark"] .editor-format-select {
     return void 0;
   }
 
+  // src/xai.ts
+  var XAI_ISSUER = "https://auth.x.ai";
+  var GROK_CLI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+  var XAI_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth2/token`;
+
   // src/renderers.ts
   function renderFormat(accounts, format, options = {}) {
     switch (format) {
@@ -2469,9 +2702,14 @@ html[data-theme="dark"] .editor-format-select {
         return accounts.length === 1 ? renderCodexManagerAccount(accounts[0], options) : accounts.map((account) => renderCodexManagerAccount(account, options));
       case "codex":
         return accounts.length === 1 ? renderCodexAuth(accounts[0], options) : accounts.map((account) => renderCodexAuth(account, options));
+      case "grok":
+        return renderGrokAuth(accounts, options);
     }
   }
   function renderCpaAccount(account, options) {
+    if (account.provider === "xai") {
+      return renderCpaXaiAccount(account, options);
+    }
     const allowSynthetic = options.allowSyntheticIdToken !== false;
     const rendered = {
       type: "codex",
@@ -2480,7 +2718,7 @@ html[data-theme="dark"] .editor-format-select {
       plan_type: account.planType ?? "",
       id_token: allowSynthetic ? account.idToken ?? "" : account.idTokenSynthetic ? "" : account.idToken ?? "",
       access_token: account.accessToken ?? "",
-      refresh_token: account.refreshToken ?? "",
+      ...shouldIncludeRefreshToken(options) ? { refresh_token: account.refreshToken ?? "" } : {},
       expired: account.expiresAt ?? "",
       last_refresh: account.lastRefresh ?? (options.now ?? /* @__PURE__ */ new Date()).toISOString(),
       disabled: false
@@ -2493,12 +2731,32 @@ html[data-theme="dark"] .editor-format-select {
     }
     return rendered;
   }
+  function renderCpaXaiAccount(account, options) {
+    const rendered = compactObject({
+      type: "xai",
+      access_token: account.accessToken,
+      refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
+      id_token: account.idToken,
+      token_type: account.tokenType,
+      expires_in: account.expiresIn,
+      expired: account.expiresAt,
+      last_refresh: account.lastRefresh ?? account.issuedAt,
+      email: account.email,
+      sub: account.userId ?? account.principalId,
+      base_url: account.baseUrl,
+      token_endpoint: account.tokenEndpoint,
+      redirect_uri: account.redirectUri,
+      disabled: account.disabled,
+      headers: account.headers
+    });
+    return rendered;
+  }
   function renderCodex2ApiAccount(account, options) {
     const allowSynthetic = options.allowSyntheticIdToken !== false;
     return compactObject({
       name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId,
       email: account.email,
-      refresh_token: account.refreshToken,
+      refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
       session_token: account.sessionToken,
       access_token: account.accessToken,
       id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
@@ -2519,16 +2777,20 @@ html[data-theme="dark"] .editor-format-select {
   }
   function renderSub2ApiAccount(account, options) {
     const allowSynthetic = options.allowSyntheticIdToken !== false;
+    const isOpenAI = account.provider === "openai";
     const credentials = compactObject({
       access_token: account.accessToken,
-      refresh_token: account.refreshToken,
-      session_token: account.sessionToken,
+      refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
+      session_token: isOpenAI ? account.sessionToken : void 0,
       id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
       expires_at: account.expiresAt,
       email: account.email,
-      chatgpt_account_id: account.chatgptAccountId,
-      chatgpt_user_id: account.chatgptUserId,
-      plan_type: account.planType
+      chatgpt_account_id: isOpenAI ? account.chatgptAccountId : void 0,
+      chatgpt_user_id: isOpenAI ? account.chatgptUserId : void 0,
+      plan_type: isOpenAI ? account.planType : void 0,
+      user_id: account.provider === "xai" ? account.userId : void 0,
+      client_id: account.provider === "xai" ? account.clientId : void 0,
+      base_url: account.provider === "xai" ? account.baseUrl : void 0
     });
     const extra = compactObject({
       import_source: "authconv",
@@ -2536,7 +2798,7 @@ html[data-theme="dark"] .editor-format-select {
     });
     return compactObject({
       name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId ?? "authconv-account",
-      platform: "openai",
+      platform: account.provider === "xai" ? "grok" : "openai",
       type: "oauth",
       credentials,
       extra,
@@ -2545,12 +2807,32 @@ html[data-theme="dark"] .editor-format-select {
       auto_pause_on_expired: true
     });
   }
+  function renderGrokAuth(accounts, options) {
+    return Object.fromEntries(accounts.map((account) => {
+      const clientId = account.clientId ?? GROK_CLI_CLIENT_ID;
+      const userId = account.userId ?? account.principalId ?? "";
+      const key = accounts.length === 1 ? `${XAI_ISSUER}::${clientId}` : `${XAI_ISSUER}::${clientId}::${userId}`;
+      return [key, compactObject({
+        key: account.accessToken ?? "",
+        auth_mode: "oidc",
+        create_time: account.createTime ?? account.issuedAt,
+        user_id: userId,
+        email: account.email ?? "",
+        principal_type: account.principalType ?? "User",
+        principal_id: account.principalId ?? userId,
+        refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken ?? "" : void 0,
+        expires_at: account.expiresAt,
+        oidc_issuer: XAI_ISSUER,
+        oidc_client_id: clientId
+      })];
+    }));
+  }
   function renderCodexManagerAccount(account, options) {
     const allowSynthetic = options.allowSyntheticIdToken !== false;
     return {
       tokens: compactObject({
         access_token: account.accessToken,
-        refresh_token: account.refreshToken,
+        refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
         id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
         account_id: account.accountId,
         chatgpt_account_id: account.chatgptAccountId
@@ -2572,39 +2854,47 @@ html[data-theme="dark"] .editor-format-select {
       tokens: {
         id_token: allowSynthetic ? account.idToken ?? "" : account.idTokenSynthetic ? "" : account.idToken ?? "",
         access_token: account.accessToken ?? "",
-        refresh_token: account.refreshToken ?? "",
+        ...shouldIncludeRefreshToken(options) ? { refresh_token: account.refreshToken ?? "" } : {},
         account_id: account.accountId ?? account.chatgptAccountId ?? ""
       },
       last_refresh: account.lastRefresh ?? (options.now ?? /* @__PURE__ */ new Date()).toISOString()
     };
   }
+  function shouldIncludeRefreshToken(options) {
+    return options.includeRefreshToken !== false;
+  }
 
   // src/file-plan.ts
-  var MERGED_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var MERGED_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api", "grok"]);
   var FORMAT_FILE_PREFIX = {
     cpa: "cpa",
     sub2api: "sub2api",
     codex2api: "codex2api",
     codexmanager: "codex-manager",
-    codex: "codex"
+    codex: "codex",
+    grok: "grok"
   };
   function buildOutputPlan(accounts, formats, options = {}) {
     const used = /* @__PURE__ */ new Map();
     const files = [];
     const useFormatFolders = formats.length > 1;
     for (const format of formats) {
+      const formatAccounts = accounts.filter((account) => supportsFormat(account, format));
+      if (formatAccounts.length === 0) {
+        continue;
+      }
       const prefix = useFormatFolders ? `${format}/` : "";
       if (MERGED_FORMATS.has(format) && options.outputModes?.[format] !== "single") {
-        const name = accounts.length === 1 ? singleAccountName(format, accounts[0]) : mergedName(format, accounts.length, "json");
+        const name = formatAccounts.length === 1 ? singleAccountName(format, formatAccounts[0]) : mergedName(format, formatAccounts.length, "json");
         files.push({
           path: uniquePath(`${prefix}${name}`, used),
           format,
-          content: renderFormat(accounts, format, options),
-          accountCount: accounts.length
+          content: renderFormat(formatAccounts, format, options),
+          accountCount: formatAccounts.length
         });
         continue;
       }
-      accounts.forEach((account) => {
+      formatAccounts.forEach((account) => {
         files.push({
           path: uniquePath(`${prefix}${singleAccountName(format, account)}`, used),
           format,
@@ -2614,6 +2904,18 @@ html[data-theme="dark"] .editor-format-select {
       });
     }
     return files;
+  }
+  function filterAccountsForFormats(accounts, formats) {
+    return accounts.filter((account) => formats.some((format) => supportsFormat(account, format)));
+  }
+  function supportsFormat(account, format) {
+    if (format === "cpa" || format === "sub2api") {
+      return account.provider === "openai" || account.provider === "xai";
+    }
+    if (format === "grok") {
+      return account.provider === "xai";
+    }
+    return account.provider === "openai";
   }
   function outputFileText(file) {
     return `${JSON.stringify(file.content, null, 2)}
@@ -2648,7 +2950,8 @@ html[data-theme="dark"] .editor-format-select {
     return {
       ...outputModes,
       sub2api: "single",
-      codex2api: "single"
+      codex2api: "single",
+      grok: "single"
     };
   }
   function jsonlPath(files) {
@@ -2666,7 +2969,7 @@ html[data-theme="dark"] .editor-format-select {
   }
   function singleAccountName(format, account) {
     const identity = safeFileSegment(account.email ?? account.name ?? "unknown");
-    const accountId = account.chatgptAccountId ?? account.accountId;
+    const accountId = account.provider === "xai" ? account.userId ?? account.principalId : account.chatgptAccountId ?? account.accountId;
     const idSegment = accountId ? safeFileSegment(accountId.slice(0, 12)) : "";
     return idSegment ? `${FORMAT_FILE_PREFIX[format]}_${identity}_${idSegment}.json` : `${FORMAT_FILE_PREFIX[format]}_${identity}.json`;
   }
@@ -2692,7 +2995,7 @@ html[data-theme="dark"] .editor-format-select {
   }
 
   // src/types.ts
-  var ALL_FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
+  var ALL_FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"];
 
   // src/i18n.ts
   var DEFAULT_LOCALE = "zh";
@@ -2717,6 +3020,7 @@ html[data-theme="dark"] .editor-format-select {
       session: "ChatGPT Session",
       sub2api: "sub2api",
       cpa: "CPA",
+      grok: "Grok / xAI",
       codexmanager: "Codex Manager",
       codex2api: "Codex2Api",
       codex: "Codex Auth",
@@ -2726,6 +3030,7 @@ html[data-theme="dark"] .editor-format-select {
       session: "ChatGPT Session",
       sub2api: "sub2api",
       cpa: "CPA",
+      grok: "Grok / xAI",
       codexmanager: "Codex Manager",
       codex2api: "Codex2Api",
       codex: "Codex Auth",
@@ -2737,7 +3042,8 @@ html[data-theme="dark"] .editor-format-select {
     sub2api: "sub2api",
     codex2api: "codex2api",
     codexmanager: "Codex Manager",
-    codex: "Codex Auth"
+    codex: "Codex Auth",
+    grok: "Grok CLI"
   };
   function plural(count, singular, pluralForm = `${singular}s`) {
     return `${count} ${count === 1 ? singular : pluralForm}`;
@@ -2764,13 +3070,14 @@ html[data-theme="dark"] .editor-format-select {
   <path...>              \u8F93\u5165 JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\u8DEF\u5F84\uFF0C\u53EF\u4F20\u591A\u4E2A
   -i, --input <path>     \u6307\u5B9A JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\uFF08\u53EF\u91CD\u590D\uFF09
   --stdin                \u4ECE\u6807\u51C6\u8F93\u5165\u8BFB\u53D6\uFF08\u4E0E -i \u4E92\u65A5\uFF09
-  -f, --format <list>    \u8F93\u51FA\u683C\u5F0F\uFF0C\u652F\u6301\u9017\u53F7\u5206\u9694\u6216\u91CD\u590D\u4F20\u5165\uFF1B\u53EF\u7528 cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api \u8F93\u51FA\u65B9\u5F0F\uFF1Amerged \u6216 single
+  -f, --format <list>    \u8F93\u51FA\u683C\u5F0F\uFF0C\u652F\u6301\u9017\u53F7\u5206\u9694\u6216\u91CD\u590D\u4F20\u5165\uFF1B\u53EF\u7528 cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok \u8F93\u51FA\u65B9\u5F0F\uFF1Amerged \u6216 single
   -o, --out-dir <path>   \u8F93\u51FA\u76EE\u5F55\uFF0C\u9ED8\u8BA4 output
   --jsonl                \u8F93\u51FA JSONL \u683C\u5F0F\uFF08\u6BCF\u8D26\u53F7\u4E00\u884C\uFF09
   --zip                  \u5199\u5165\u4E00\u4E2A ZIP \u6587\u4EF6\uFF0C\u538B\u7F29\u5305\u5185\u4FDD\u7559\u5F53\u524D\u8F93\u51FA\u76EE\u5F55\u7ED3\u6784
   --stdout               \u5355\u683C\u5F0F\u5355\u6587\u4EF6\u8F93\u51FA\u5230 stdout
   --no-fake-id           \u8F93\u51FA\u4E0D\u5305\u542B\u5408\u6210 id_token\uFF08\u9ED8\u8BA4\u4F1A\u8F93\u51FA\uFF09
+  --no-refresh-token     \u8F93\u51FA\u4E0D\u5305\u542B refresh_token\uFF08\u9ED8\u8BA4\u4F1A\u8F93\u51FA\uFF09
   --lang <zh|en>         \u4EBA\u7C7B\u53EF\u8BFB\u8F93\u51FA\u8BED\u8A00\uFF0C\u672A\u68C0\u6D4B\u5230\u65F6\u9ED8\u8BA4\u82F1\u6587
   --inspect              \u53EA\u6253\u5370\u8D26\u53F7\u6458\u8981\uFF0C\u4E0D\u4EA7\u51FA\u6587\u4EF6
   --dry-run              \u53EA\u6253\u5370\u5199\u5165\u8BA1\u5212\uFF0C\u4E0D\u5B9E\u9645\u5199\u76D8
@@ -2783,12 +3090,13 @@ html[data-theme="dark"] .editor-format-select {
         inputPathSource: "\u8F93\u5165\u8DEF\u5F84",
         errors: {
           noAccounts: "\u672A\u627E\u5230\u53EF\u8F6C\u6362\u8D26\u53F7",
+          noApplicableFormats: "\u6240\u9009\u683C\u5F0F\u4E0D\u9002\u7528\u4E8E\u5DF2\u8BC6\u522B\u8D26\u53F7\uFF0C\u672A\u751F\u6210\u4EFB\u4F55\u6587\u4EF6",
           cwdMissing: "\u5F53\u524D\u76EE\u5F55\u4E0D\u5B58\u5728",
           unknownArg: (arg) => `\u672A\u77E5\u53C2\u6570: ${arg}`,
           missingInput: "\u672A\u6307\u5B9A\u8F93\u5165\uFF08\u9700\u8981 <path>\u3001-i \u6216 --stdin\uFF09",
           invalidModeSyntax: (value) => `--mode \u683C\u5F0F\u9519\u8BEF: ${value}\uFF08\u5E94\u4E3A format=merged|single\uFF09`,
           unknownOutputFormat: (format) => `\u672A\u77E5\u8F93\u51FA\u683C\u5F0F: ${format}`,
-          unsupportedModeFormat: (format) => `--mode \u4EC5\u652F\u6301 sub2api \u6216 codex2api: ${format}`,
+          unsupportedModeFormat: (format) => `--mode \u4EC5\u652F\u6301 sub2api\u3001codex2api \u6216 grok: ${format}`,
           unknownOutputMode: (mode) => `--mode \u5305\u542B\u672A\u77E5\u8F93\u51FA\u65B9\u5F0F: ${mode}`,
           stdinConflict: (source) => `${source} \u4E0E --stdin \u51B2\u7A81\uFF0C\u53EA\u80FD\u6307\u5B9A\u4E00\u4E2A\u8F93\u5165\u6765\u6E90`,
           stdinPathConflict: "--stdin \u4E0E\u5DF2\u6709\u8F93\u5165\u8DEF\u5F84\u51B2\u7A81\uFF0C\u53EA\u80FD\u6307\u5B9A\u4E00\u4E2A\u8F93\u5165\u6765\u6E90",
@@ -2830,16 +3138,12 @@ html[data-theme="dark"] .editor-format-select {
         invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: \u8F93\u5165\u4E0D\u7B26\u5408 ${inputFormat} \u8F93\u5165\u683C\u5F0F`,
         noTokens: (sourceName) => `${sourceName}: \u672A\u627E\u5230\u53EF\u8BC6\u522B token \u5B57\u6BB5`,
         invalidExpiry: (sourceName, value) => `${sourceName}: \u8FC7\u671F\u65F6\u95F4\u683C\u5F0F\u9519\u8BEF ("${value}")`,
-        syntheticIdToken: (sourceName) => `${sourceName}: \u5DF2\u751F\u6210\u5408\u6210 id_token`,
-        missingIdToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 id_token`,
-        missingRefreshToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 refresh_token`,
-        missingAccessToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 access_token`,
         claimOverride: (sourceName, fields) => `${sourceName}: access_token claim \u4E0D\u4E00\u81F4\uFF0C\u8986\u76D6\u5B57\u6BB5: ${fields.join(",")}`,
         claimSanity: (sourceName, fields) => `${sourceName}: JWT claim \u6821\u9A8C\u5F02\u5E38: ${fields.join(",")}`
       },
       web: {
-        pageTitle: "GPT Auth \u8F6C\u6362 | \u7EAF\u672C\u5730\u5B89\u5168\u51ED\u636E\u591A\u683C\u5F0F\u5904\u7406\u5DE5\u5177",
-        appTitle: "GPT Auth \u8F6C\u6362",
+        pageTitle: "Auth Converter | OpenAI / Grok OAuth \u51ED\u8BC1\u8F6C\u6362\u5DE5\u5177",
+        appTitle: "Auth Converter",
         notice: "\u7EAF\u672C\u5730\u5B89\u5168\u8F6C\u6362\uFF0C\u6240\u6709\u8FD0\u7B97\u5728\u5F53\u524D\u6D4F\u89C8\u5668\u4E2D\u5B8C\u6210\u3002",
         dragTitle: "\u91CA\u653E\u4EE5\u5BFC\u5165 JSON / JSONL / ZIP \u51ED\u636E",
         dragSub: "\u677E\u5F00\u6DFB\u52A0\u5230\u5217\u8868",
@@ -2855,7 +3159,7 @@ html[data-theme="dark"] .editor-format-select {
         addDraftButton: "\u52A0\u5165\u5217\u8868",
         clearButton: "\u6E05\u7A7A",
         inputAria: "JSON \u51ED\u636E\u8F93\u5165",
-        inputPlaceholder: `\u7C98\u8D34 ChatGPT Session\u3001Codex auth.json\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
+        inputPlaceholder: `\u7C98\u8D34 OpenAI / Grok OAuth JSON\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
 
 \u793A\u4F8B\uFF1A
 {
@@ -2881,12 +3185,14 @@ html[data-theme="dark"] .editor-format-select {
         outputOptions: "\u8F93\u51FA\u9009\u9879",
         jsonlFormat: "JSONL \u683C\u5F0F",
         fakeId: "\u5408\u6210 id_token",
+        refreshToken: "\u5305\u542B refresh_token",
         accountTitle: "\u5DF2\u52A0\u8F7D\u8D26\u53F7",
         clearAccounts: "\u6E05\u7A7A\u5217\u8868",
-        accountColumns: ["\u8D26\u53F7\u6807\u8BC6 (Email / ID)", "\u5957\u9910\u72B6\u6001", "\u8FC7\u671F\u65F6\u95F4", "\u64CD\u4F5C"],
+        accountColumns: ["\u8D26\u53F7\u6807\u8BC6 (Email / ID)", "\u5E73\u53F0 / \u5957\u9910", "\u8FC7\u671F\u65F6\u95F4", "\u64CD\u4F5C"],
         accountListAria: "\u8D26\u53F7\u5217\u8868",
         previewAria: "\u8F93\u51FA\u9884\u89C8",
         previewTabsAria: "\u9884\u89C8\u683C\u5F0F\u9009\u62E9",
+        jwtHoverAria: "\u60AC\u505C\u6216\u805A\u7126\u4EE5\u9884\u89C8 JWT \u5185\u5BB9",
         copyPreview: "\u590D\u5236\u5F53\u524D\u9884\u89C8",
         copied: "\u2713 \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F",
         copyToast: "\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F",
@@ -2926,6 +3232,7 @@ html[data-theme="dark"] .editor-format-select {
         removeAccount: (label) => `\u5220\u9664 ${label}`,
         jsonlTooltip: "JSONL\uFF1A\u884C\u5F0F JSON \u683C\u5F0F\uFF0C\u6BCF\u884C\u4E00\u4E2A\u8D26\u53F7\uFF08\u9002\u5408\u5355\u884C\u51ED\u636E\u5BFC\u5165\u7B49\u573A\u666F\uFF09\u3002",
         fakeIdTooltip: "\u5408\u6210 id_token\uFF1A\u9488\u5BF9\u7F3A\u5C11 id_token \u7684\u8D26\u53F7\u81EA\u52A8\u5408\u6210\u6A21\u62DF\u51ED\u636E\uFF0C\u4EE5\u517C\u5BB9 Codex Auth \u7B49\u4E0B\u6E38\u5DE5\u5177\u3002",
+        refreshTokenTooltip: "\u53D6\u6D88\u540E\uFF0C\u6240\u6709\u8F93\u51FA\u90FD\u4F1A\u7701\u7565 refresh_token\uFF1B\u51ED\u8BC1\u8FC7\u671F\u540E\u5C06\u65E0\u6CD5\u81EA\u52A8\u7EED\u671F\u3002",
         codexManagerTooltip: "Codex-Manager \u683C\u5F0F\u3002",
         codexTooltip: "Codex auth.json \u683C\u5F0F\uFF0C\u53EF\u5BFC\u5165 Codex CLI\u3001Cockpit \u548C AxonHub \u7B49\u517C\u5BB9\u8BE5\u683C\u5F0F\u7684\u9879\u76EE\u3002",
         modeSingle: "\u5355\u4E2A",
@@ -2959,13 +3266,14 @@ Options:
   <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
   -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
   --stdin                Read from standard input; conflicts with paths
-  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
+  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok output mode: merged or single
   -o, --out-dir <path>   Output directory, default output
   --jsonl                Output JSONL text, one JSON document per line
   --zip                  Write one ZIP file and keep the current output tree inside it
   --stdout               Write a single output file to stdout
   --no-fake-id           Omit synthetic id_token from output (included by default)
+  --no-refresh-token     Omit refresh_token from output (included by default)
   --lang <zh|en>         Human-readable output language, default en when undetected
   --inspect              Print account summary only
   --dry-run              Print write plan without writing files
@@ -2978,12 +3286,13 @@ Options:
         inputPathSource: "input path",
         errors: {
           noAccounts: "No convertible accounts found",
+          noApplicableFormats: "The selected formats do not apply to the recognized accounts; no files were generated",
           cwdMissing: "Current directory no longer exists",
           unknownArg: (arg) => `Unknown argument: ${arg}`,
           missingInput: "No input specified; pass <path>, -i, or --stdin",
           invalidModeSyntax: (value) => `Invalid --mode: ${value} (expected format=merged|single)`,
           unknownOutputFormat: (format) => `Unknown output format: ${format}`,
-          unsupportedModeFormat: (format) => `--mode only supports sub2api or codex2api: ${format}`,
+          unsupportedModeFormat: (format) => `--mode only supports sub2api, codex2api, or grok: ${format}`,
           unknownOutputMode: (mode) => `Unknown output mode in --mode: ${mode}`,
           stdinConflict: (source) => `${source} conflicts with --stdin; choose one input source`,
           stdinPathConflict: "--stdin conflicts with input paths; choose one input source",
@@ -3025,16 +3334,12 @@ Press Ctrl+C to stop.
         invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: input is not ${inputFormat}`,
         noTokens: (sourceName) => `${sourceName}: no recognizable token fields found`,
         invalidExpiry: (sourceName, value) => `${sourceName}: invalid expiry time ("${value}")`,
-        syntheticIdToken: (sourceName) => `${sourceName}: generated synthetic id_token`,
-        missingIdToken: (sourceName) => `${sourceName}: missing id_token`,
-        missingRefreshToken: (sourceName) => `${sourceName}: missing refresh_token`,
-        missingAccessToken: (sourceName) => `${sourceName}: missing access_token`,
         claimOverride: (sourceName, fields) => `${sourceName}: access_token claim mismatch, overwritten fields: ${fields.join(",")}`,
         claimSanity: (sourceName, fields) => `${sourceName}: invalid JWT claims: ${fields.join(",")}`
       },
       web: {
-        pageTitle: "GPT Auth Converter | Local credential format converter",
-        appTitle: "GPT Auth Converter",
+        pageTitle: "Auth Converter | Local OpenAI / Grok OAuth credential converter",
+        appTitle: "Auth Converter",
         notice: "Local-only conversion. Everything runs in this browser.",
         dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
         dragSub: "Release to add to the list",
@@ -3050,7 +3355,7 @@ Press Ctrl+C to stop.
         addDraftButton: "Add to List",
         clearButton: "Clear",
         inputAria: "JSON credential input",
-        inputPlaceholder: `Paste a ChatGPT /api/auth/session JSON response, Codex auth.json, JSONL text, or drop multi-account JSON exports below...
+        inputPlaceholder: `Paste OpenAI / Grok OAuth JSON, JSONL text, or drop multi-account exports below...
 
 Example:
 {
@@ -3079,12 +3384,14 @@ Example:
         outputOptions: "Options",
         jsonlFormat: "JSONL Format",
         fakeId: "Synthetic id_token",
+        refreshToken: "Include refresh_token",
         accountTitle: "Loaded Accounts",
         clearAccounts: "Clear List",
-        accountColumns: ["Account (Email / ID)", "Plan", "Expires At", "Action"],
+        accountColumns: ["Account (Email / ID)", "Platform / Plan", "Expires At", "Action"],
         accountListAria: "Account list",
         previewAria: "Output preview",
         previewTabsAria: "Preview format selection",
+        jwtHoverAria: "Hover or focus to preview JWT contents",
         copyPreview: "Copy Preview",
         copied: "\u2713 Copied",
         copyToast: "Copied to clipboard",
@@ -3124,6 +3431,7 @@ Example:
         removeAccount: (label) => `Remove ${label}`,
         jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
         fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
+        refreshTokenTooltip: "When disabled, every output omits refresh_token and credentials cannot refresh automatically after expiry.",
         codexManagerTooltip: "Codex-Manager format.",
         codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
         modeSingle: "Single",
@@ -3300,21 +3608,27 @@ Example:
 
   // src/jwt.ts
   var SYNTHETIC_ID_TOKEN_PLACEHOLDER_SIGNATURE = base64urlEncode("lanv_authconv");
-  function decodeJwtPayload(token) {
+  function decodeJwtParts(token) {
     if (!token) {
       return void 0;
     }
     const parts = token.split(".");
-    if (parts.length < 2 || !parts[1]) {
+    if (parts.length !== 3 || !parts[0] || !parts[1]) {
       return void 0;
     }
     try {
-      const text = base64urlDecode(parts[1]);
-      const parsed = JSON.parse(text);
-      return isRecord(parsed) ? parsed : void 0;
+      const header = JSON.parse(base64urlDecode(parts[0]));
+      const payload = JSON.parse(base64urlDecode(parts[1]));
+      if (!isRecord(header) || !isRecord(payload)) {
+        return void 0;
+      }
+      return { header, payload };
     } catch {
       return void 0;
     }
+  }
+  function decodeJwtPayload(token) {
+    return decodeJwtParts(token)?.payload;
   }
   function createSyntheticIdToken(claims) {
     const header = {
@@ -3407,6 +3721,7 @@ Example:
   }
 
   // src/normalize.ts
+  var OPENAI_ISSUER = "https://auth.openai.com";
   function detectInputFormat(input) {
     if (Array.isArray(input)) {
       const formats = uniqueFormats(input.filter(isRecord).map(detectArrayItemFormat));
@@ -3445,8 +3760,14 @@ Example:
     if (isRecord(input.credentials)) {
       return "sub2api";
     }
-    if (input.type === "codex" && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
+    if (isGrokAuthRecord(input)) {
+      return "grok";
+    }
+    if ((input.type === "codex" || input.type === "xai") && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
       return "cpa";
+    }
+    if (hasXaiJwt(input)) {
+      return "grok";
     }
     if (isCodexAuthRecord(input)) {
       return "codex";
@@ -3466,18 +3787,27 @@ Example:
     const locale = options.locale ?? DEFAULT_LOCALE;
     const messages = messagesFor(locale).normalize;
     const warnings = [];
+    const rejections = [];
     const selectedFormat = selectedInputFormat(options.inputFormat);
     const detectedFormat = detectInputFormat(input);
     const inputFormat = selectedFormat ?? detectedFormat;
     const candidates = extractCandidates(input, source, selectedFormat);
-    const accounts = candidates.map((candidate, index) => {
+    const acceptedCandidates = candidates.filter((candidate) => {
+      const rejection = candidateRejectionWarning(candidate, options.locale ?? DEFAULT_LOCALE);
+      if (rejection) {
+        rejections.push(rejection);
+        return false;
+      }
+      return true;
+    });
+    const accounts = acceptedCandidates.map((candidate, index) => {
       const account = normalizeCandidate(candidate, index, options);
       if (account) {
         account.inputFormat = candidate.inputFormat;
       }
       return account;
     }).filter((account) => account !== void 0);
-    if (accounts.length === 0) {
+    if (accounts.length === 0 && rejections.length === 0) {
       warnings.push(
         selectedFormat ? messages.invalidInputFormat(source.sourceName, inputFormatLabel(selectedFormat, locale)) : messages.noTokens(source.sourceName)
       );
@@ -3485,8 +3815,20 @@ Example:
     return {
       accounts,
       warnings: warnings.concat(accounts.flatMap((account) => account.warnings)),
+      rejections,
       inputFormat: selectedFormat ?? commonAccountInputFormat(accounts) ?? inputFormat
     };
+  }
+  function candidateRejectionWarning(candidate, locale) {
+    const records = candidate.records;
+    const accessClaims = decodeJwtPayload(firstString(records, ["access_token", "accessToken", "key"]));
+    const idClaims = decodeJwtPayload(firstString(records, ["id_token", "idToken"]));
+    const structureProvider = providerFromStructure(candidate, records);
+    const jwtProvider = providerFromIssuer(claimString(accessClaims, "iss") ?? claimString(idClaims, "iss"));
+    if (structureProvider && jwtProvider && structureProvider !== jwtProvider) {
+      return `${candidate.sourceName}: ${locale === "en" ? "provider conflict" : "\u5E73\u53F0\u51B2\u7A81"}`;
+    }
+    return void 0;
   }
   function selectedInputFormat(inputFormat) {
     return inputFormat && inputFormat !== "unknown" ? inputFormat : void 0;
@@ -3523,6 +3865,9 @@ Example:
     if (inputFormat === "sub2api" && Array.isArray(record.accounts)) {
       return record.accounts.filter(isRecord).map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "sub2api"));
     }
+    if (inputFormat === "grok") {
+      return grokRecords(record).map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "grok"));
+    }
     return [candidateFromRecord(record, source, index, inputFormat)];
   }
   function extractCandidatesForFormat(input, source, inputFormat) {
@@ -3537,6 +3882,8 @@ Example:
         return sub2ApiRecords(input);
       case "cpa":
         return recordList(input).filter(isCpaRecord);
+      case "grok":
+        return grokRecords(input);
       case "codexmanager":
         return recordList(input).filter(isCodexManagerRecord);
       case "codex2api":
@@ -3572,7 +3919,28 @@ Example:
     return isRecord(record.credentials) || typeof record.platform === "string";
   }
   function isCpaRecord(record) {
-    return record.type === "codex" && Boolean(firstString([record], ["access_token", "refresh_token", "session_token", "id_token"]));
+    return (record.type === "codex" || record.type === "xai") && Boolean(firstString([record], ["access_token", "refresh_token", "session_token", "id_token"]));
+  }
+  function isGrokAuthRecord(record) {
+    const entries = Object.entries(record);
+    return entries.length > 0 && entries.every(([key, value]) => key.startsWith(`${XAI_ISSUER}::`) && isRecord(value) && (typeof value.key === "string" || typeof value.refresh_token === "string"));
+  }
+  function grokRecords(input) {
+    if (!isRecord(input)) {
+      return [];
+    }
+    if (!isGrokAuthRecord(input)) {
+      return hasXaiJwt(input) || input.type === "xai" ? [input] : [];
+    }
+    return Object.entries(input).map(([authKey, value]) => ({
+      ...value,
+      auth_key: authKey
+    }));
+  }
+  function hasXaiJwt(record) {
+    const accessClaims = decodeJwtPayload(firstString([record], ["access_token", "accessToken", "key"]));
+    const idClaims = decodeJwtPayload(firstString([record], ["id_token", "idToken"]));
+    return claimString(accessClaims, "iss") === XAI_ISSUER || claimString(idClaims, "iss") === XAI_ISSUER;
   }
   function isCodexManagerRecord(record) {
     return isRecord(record.tokens) && isRecord(record.meta);
@@ -3639,7 +4007,7 @@ Example:
   function normalizeCandidate(candidate, index, options) {
     const messages = messagesFor(options.locale ?? DEFAULT_LOCALE).normalize;
     const { records } = candidate;
-    const accessToken = firstString(records, ["access_token", "accessToken"]);
+    const accessToken = firstString(records, ["access_token", "accessToken", "key"]);
     const refreshToken = firstString(records, ["refresh_token", "refreshToken"]);
     const sessionToken = firstString(records, ["session_token", "sessionToken"]);
     let idToken = firstString(records, ["id_token", "idToken"]);
@@ -3654,6 +4022,11 @@ Example:
     const authClaimRecords = accessFirstClaimRecords.map(openAIAuthClaims).filter((claims2) => claims2 !== void 0);
     const claims = accessClaims ?? idClaims;
     const warnings = [];
+    const structureProvider = providerFromStructure(candidate, records);
+    const jwtProvider = providerFromIssuer(
+      claimString(accessClaims, "iss") ?? claimString(idClaims, "iss")
+    );
+    const provider = structureProvider ?? jwtProvider ?? "unknown";
     const accessAuthClaims = openAIAuthClaims(accessClaims);
     const idAuthClaims = openAIAuthClaims(idClaims);
     const claimedChatgptAccountUserId = claimString(accessAuthClaims, "chatgpt_account_user_id") ?? claimString(accessClaims, "chatgpt_account_user_id") ?? claimString(idAuthClaims, "chatgpt_account_user_id") ?? claimString(idClaims, "chatgpt_account_user_id");
@@ -3676,8 +4049,8 @@ Example:
     const recordIssuer = firstString(records, ["issuer", "iss"]);
     const issuer = preferClaimIdentity ? claimedIssuer ?? recordIssuer : recordIssuer ?? claimedIssuer;
     const audience = firstClaimStringArray(accessFirstClaimRecords, "aud");
-    const clientId = firstClaimString(accessFirstClaimRecords, ["client_id"]);
-    const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp");
+    const clientId = firstString(records, ["client_id", "clientId", "oidc_client_id"]) ?? firstClaimString(accessFirstClaimRecords, ["client_id"]);
+    const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp") ?? firstClaimStringArray(accessFirstClaimRecords, "scope");
     const claimedNotBeforeNumber = firstClaimNumber(accessFirstClaimRecords, "nbf");
     const notBefore = normalizeTimeValue(claimedNotBeforeNumber);
     const recordEmail = firstString(records, ["email", "email_address", "emailAddress"]);
@@ -3739,6 +4112,7 @@ Example:
       }
     }
     const sanityFields = claimSanityFields({
+      provider,
       issuer: claimedIssuer,
       audience,
       notBefore: claimedNotBeforeNumber,
@@ -3754,7 +4128,7 @@ Example:
     if (idToken && idTokenSynthetic) {
       idToken = applySyntheticIdTokenSignature(idToken);
     }
-    if (!idToken) {
+    if (!idToken && provider === "openai") {
       const syntheticClaims = buildSyntheticClaims({
         claims,
         email,
@@ -3770,18 +4144,10 @@ Example:
       if (syntheticClaims) {
         idToken = createSyntheticIdToken(syntheticClaims);
         idTokenSynthetic = true;
-        warnings.push(messages.syntheticIdToken(candidate.sourceName));
-      } else {
-        warnings.push(messages.missingIdToken(candidate.sourceName));
       }
     }
-    if (!refreshToken) {
-      warnings.push(messages.missingRefreshToken(candidate.sourceName));
-    }
-    if (!accessToken) {
-      warnings.push(messages.missingAccessToken(candidate.sourceName));
-    }
     return {
+      provider,
       accessToken,
       refreshToken,
       idToken,
@@ -3803,6 +4169,17 @@ Example:
       planType,
       lastRefresh,
       expiresAt,
+      issuedAt: claimedLastRefresh,
+      tokenType: firstString(records, ["token_type", "tokenType"]),
+      expiresIn: firstNumber(records, ["expires_in", "expiresIn"]),
+      principalId: firstString(records, ["principal_id", "principalId"]),
+      principalType: firstString(records, ["principal_type", "principalType"]),
+      createTime: firstString(records, ["create_time", "createTime"]),
+      baseUrl: firstString(records, ["base_url", "baseUrl"]),
+      tokenEndpoint: firstString(records, ["token_endpoint", "tokenEndpoint"]),
+      redirectUri: firstString(records, ["redirect_uri", "redirectUri"]),
+      headers: firstStringRecord(records, "headers"),
+      disabled: firstBoolean(records, ["disabled"]),
       sourceName: candidate.sourceName,
       sourcePath: candidate.sourcePath || `${candidate.sourceName}#${index + 1}`,
       warnings
@@ -3824,23 +4201,13 @@ Example:
     const result = [];
     let firstAffectedAccount;
     for (const [inputIndex, account] of accounts.entries()) {
-      const existingAccounts = result.filter((existing2) => hasCompatibleCredentials(existing2, account));
-      const existing = existingAccounts[0];
-      if (existing) {
+      const credentialMatches = result.filter((existing) => hasCompatibleCredentials(existing, account));
+      if (credentialMatches.length === 1) {
+        const existing = credentialMatches[0];
+        mergeMissingAccountFields(existing, account);
         if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
           firstAffectedAccount = existing;
         }
-        for (const duplicate of existingAccounts.slice(1)) {
-          mergeMissingAccountFields(existing, duplicate);
-          if (duplicate === firstAffectedAccount) {
-            firstAffectedAccount = existing;
-          }
-          const index = result.indexOf(duplicate);
-          if (index >= 0) {
-            result.splice(index, 1);
-          }
-        }
-        mergeMissingAccountFields(existing, account);
         continue;
       }
       result.push(account);
@@ -3855,6 +4222,9 @@ Example:
     };
   }
   function hasCompatibleCredentials(left, right) {
+    if (left.provider !== right.provider) {
+      return false;
+    }
     let hasSharedCredential = false;
     for (const key of DEDUPE_CREDENTIAL_KEYS) {
       const leftValue = dedupeCredentialValue(left, key);
@@ -3938,6 +4308,64 @@ Example:
     }
     return void 0;
   }
+  function firstNumber(records, keys) {
+    for (const record of records) {
+      for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return value;
+        }
+        if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+          return Number(value);
+        }
+      }
+    }
+    return void 0;
+  }
+  function firstStringRecord(records, key) {
+    for (const record of records) {
+      const value = record[key];
+      if (!isRecord(value)) {
+        continue;
+      }
+      const entries = Object.entries(value).filter((entry) => typeof entry[1] === "string");
+      return Object.fromEntries(entries);
+    }
+    return void 0;
+  }
+  function providerFromIssuer(issuer) {
+    if (issuer === XAI_ISSUER) {
+      return "xai";
+    }
+    if (issuer === OPENAI_ISSUER) {
+      return "openai";
+    }
+    return void 0;
+  }
+  function providerFromStructure(candidate, records) {
+    if (candidate.inputFormat === "grok") {
+      return "xai";
+    }
+    const platform = firstString(records, ["platform"]);
+    const type = firstString(records, ["type"]);
+    const issuer = firstString(records, ["oidc_issuer", "issuer"]);
+    const tokenEndpoint = firstString(records, ["token_endpoint", "tokenEndpoint"]);
+    const openAiAccountId = firstString(records, [
+      "account_id",
+      "accountId",
+      "chatgpt_account_id",
+      "chatgptAccountId",
+      "chatgpt_user_id",
+      "chatgptUserId"
+    ]);
+    if (type === "xai" || platform === "grok" || issuer === XAI_ISSUER || tokenEndpoint === `${XAI_ISSUER}/oauth2/token`) {
+      return "xai";
+    }
+    if (type === "codex" || platform === "openai" || Boolean(openAiAccountId) || candidate.inputFormat === "session" || candidate.inputFormat === "codex" || candidate.inputFormat === "codexmanager" || candidate.inputFormat === "codex2api") {
+      return "openai";
+    }
+    return void 0;
+  }
   function firstClaimString(records, keys) {
     for (const record of records) {
       const value = firstString([record], keys);
@@ -3987,10 +4415,11 @@ Example:
   }
   function claimSanityFields(input) {
     const fields = [];
-    if (input.issuer && input.issuer !== "https://auth.openai.com") {
+    const expectedIssuer = input.provider === "xai" ? XAI_ISSUER : input.provider === "openai" ? OPENAI_ISSUER : void 0;
+    if (expectedIssuer && input.issuer && input.issuer !== expectedIssuer) {
       fields.push("iss");
     }
-    if (input.audience && !input.audience.includes("https://api.openai.com/v1")) {
+    if (input.provider === "openai" && input.audience && !input.audience.includes("https://api.openai.com/v1")) {
       fields.push("aud");
     }
     if (input.notBefore !== void 0 && input.expiresAt !== void 0 && input.notBefore > input.expiresAt) {
@@ -5080,6 +5509,10 @@ Example:
   }
 
   // src/web/state-helpers.ts
+  function effectiveFormats(selectedFormats, applicableFormats2) {
+    const selected = new Set(selectedFormats);
+    return applicableFormats2.filter((format) => selected.has(format));
+  }
   function activeAccountSource(accounts, draftAccounts2) {
     if (draftAccounts2.length > 0) {
       return { kind: "draft", accounts: draftAccounts2 };
@@ -5117,6 +5550,44 @@ Example:
       merged: Math.max(processed - added, 0)
     };
   }
+  function isExpiredCredential(expiresAt, now = Date.now()) {
+    if (!expiresAt) {
+      return false;
+    }
+    const expiresAtTime = new Date(expiresAt).getTime();
+    return Number.isFinite(expiresAtTime) && expiresAtTime <= now;
+  }
+  function displayCredentialExpiry(expiresAt, locale, timeZone) {
+    const date = new Date(expiresAt);
+    if (!Number.isFinite(date.getTime())) {
+      return expiresAt;
+    }
+    const parts = new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-CA", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone
+    }).formatToParts(date);
+    const value = (type) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${value("year")}-${value("month")}-${value("day")} ${value("hour")}:${value("minute")}`;
+  }
+
+  // src/web/jwt-preview.ts
+  function jwtPopoverText(token) {
+    const decoded = decodeJwtParts(token);
+    if (!decoded) {
+      return void 0;
+    }
+    return [
+      "Header",
+      JSON.stringify(decoded.header, null, 2),
+      "Payload",
+      JSON.stringify(decoded.payload, null, 2)
+    ].join("\n");
+  }
 
   // src/web/url-state.ts
   var URL_KEYS = {
@@ -5125,11 +5596,12 @@ Example:
     mode: "mode",
     preview: "preview",
     fakeid: "fakeid",
+    refresh: "refresh",
     lang: "lang"
   };
   var NO_FORMATS = "none";
   var OUTPUT_FORMATS = new Set(ALL_FORMATS);
-  var MODE_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var MODE_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api", "grok"]);
   function parseOutputOptionsSearch(search) {
     const params = new URLSearchParams(search);
     const selectedFormats = parseFormats(params.get(URL_KEYS.format));
@@ -5138,6 +5610,7 @@ Example:
     const previewFormat = parseFormat(params.get(URL_KEYS.preview));
     const fakeidVal = params.get(URL_KEYS.fakeid);
     const allowSyntheticIdToken = fakeidVal === null ? void 0 : fakeidVal !== "false";
+    const includeRefreshToken = parseBooleanParam(params.get(URL_KEYS.refresh));
     const locale = normalizeLocale(params.get(URL_KEYS.lang));
     return {
       ...selectedFormats ? { selectedFormats } : {},
@@ -5145,6 +5618,7 @@ Example:
       ...Object.keys(outputModes).length > 0 ? { outputModes } : {},
       ...previewFormat ? { previewFormat } : {},
       ...allowSyntheticIdToken !== void 0 ? { allowSyntheticIdToken } : {},
+      ...includeRefreshToken !== void 0 ? { includeRefreshToken } : {},
       ...locale ? { locale } : {}
     };
   }
@@ -5160,12 +5634,26 @@ Example:
     } else {
       url.searchParams.delete(URL_KEYS.fakeid);
     }
+    if (options.includeRefreshToken === false) {
+      url.searchParams.set(URL_KEYS.refresh, "false");
+    } else {
+      url.searchParams.delete(URL_KEYS.refresh);
+    }
     if (options.locale) {
       url.searchParams.set(URL_KEYS.lang, options.locale);
     } else {
       url.searchParams.delete(URL_KEYS.lang);
     }
     return url.toString();
+  }
+  function parseBooleanParam(value) {
+    if (value === "true") {
+      return true;
+    }
+    if (value === "false") {
+      return false;
+    }
+    return void 0;
   }
   function parseFormats(value) {
     if (!value) {
@@ -5213,12 +5701,13 @@ Example:
   // src/web/preferences.ts
   var PREFERENCES_STORAGE_KEY = "authconv.preferences.v1";
   var OUTPUT_FORMATS2 = new Set(ALL_FORMATS);
-  var MODE_FORMATS2 = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var MODE_FORMATS2 = /* @__PURE__ */ new Set(["sub2api", "codex2api", "grok"]);
   var INPUT_FORMATS = /* @__PURE__ */ new Set([
     "auto",
     "session",
     "sub2api",
     "cpa",
+    "grok",
     "codexmanager",
     "codex2api",
     "codex"
@@ -5261,6 +5750,7 @@ Example:
     const outputModes = parseOutputModes2(value.outputModes);
     const previewFormat = parseOutputFormat(value.previewFormat);
     const allowSyntheticIdToken = typeof value.allowSyntheticIdToken === "boolean" ? value.allowSyntheticIdToken : void 0;
+    const includeRefreshToken = typeof value.includeRefreshToken === "boolean" ? value.includeRefreshToken : void 0;
     const locale = typeof value.locale === "string" ? normalizeLocale(value.locale) : void 0;
     const themeMode = parseThemeMode(value.themeMode);
     const forcedInputFormat = parseInputFormat(value.forcedInputFormat);
@@ -5270,6 +5760,7 @@ Example:
       ...Object.keys(outputModes).length > 0 ? { outputModes } : {},
       ...previewFormat ? { previewFormat } : {},
       ...allowSyntheticIdToken !== void 0 ? { allowSyntheticIdToken } : {},
+      ...includeRefreshToken !== void 0 ? { includeRefreshToken } : {},
       ...locale ? { locale } : {},
       ...themeMode ? { themeMode } : {},
       ...forcedInputFormat ? { forcedInputFormat } : {}
@@ -5322,26 +5813,29 @@ Example:
   }
 
   // src/web/app.ts
-  var FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
+  var FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"];
   var INPUT_FORMAT_BADGE_LABELS = {
     session: "Session",
     sub2api: "sub2api",
     cpa: "CPA",
+    grok: "Grok / xAI",
     codexmanager: "Codex Manager",
     codex2api: "Codex2Api",
     codex: "Codex Auth",
     unknown: "Unknown"
   };
-  var SELECTABLE_INPUT_FORMATS = ["session", "sub2api", "cpa", "codexmanager", "codex2api", "codex"];
-  var MODE_FORMATS3 = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+  var SELECTABLE_INPUT_FORMATS = ["session", "sub2api", "cpa", "grok", "codexmanager", "codex2api", "codex"];
+  var MODE_FORMATS3 = /* @__PURE__ */ new Set(["sub2api", "codex2api", "grok"]);
   var SESSION_URL = "https://chatgpt.com/api/auth/session";
+  var CHEVRON_SVG = `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
   var state = {
     sourceErrors: [],
     accounts: [],
-    selectedFormats: ["cpa"],
+    selectedFormats: [...FORMATS],
     outputModes: {
       sub2api: "merged",
-      codex2api: "merged"
+      codex2api: "merged",
+      grok: "merged"
     },
     outputTextMode: "json",
     previewFormat: "cpa",
@@ -5351,12 +5845,17 @@ Example:
     nextInputIndex: 1,
     forcedInputFormat: "auto",
     allowSyntheticIdToken: true,
+    includeRefreshToken: true,
     downloadBusy: false,
     locale: detectWebLocale(window.location.search)
   };
   var systemDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
   var toastTimer;
   var copyResetTimer;
+  var jwtPopoverShowTimer;
+  var jwtPopoverHideTimer;
+  var jwtPopoverTrigger;
+  var jwtPopoverPinned = false;
   var dragDepth = 0;
   var els = {
     jsonInput: byId("jsonInput"),
@@ -5377,10 +5876,15 @@ Example:
     jsonlToggleContainer: byId("jsonlToggleContainer"),
     fakeIdToggle: byId("fakeIdToggle"),
     fakeIdToggleContainer: byId("fakeIdToggleContainer"),
+    refreshTokenToggle: byId("refreshTokenToggle"),
+    refreshTokenToggleContainer: byId("refreshTokenToggleContainer"),
     accountSection: byId("accountSection"),
     clearAccountsButton: byId("clearAccountsButton"),
     accountRows: byId("accountRows"),
     previewOutput: byId("previewOutput"),
+    jwtPopover: byId("jwtPopover"),
+    jwtPopoverBody: byId("jwtPopoverBody"),
+    jwtPopoverCopy: byId("jwtPopoverCopy"),
     copyButton: byId("copyButton"),
     downloadButton: byId("downloadButton"),
     downloadBtnText: byId("downloadBtnText"),
@@ -5401,6 +5905,7 @@ Example:
     applyTheme();
     renderFormatControls();
     bindEvents();
+    bindCollapsiblePanels();
     const initialText = els.jsonInput.value.trim();
     if (initialText) {
       state.draftSource = { name: draftSourceName(), path: "draft", text: initialText };
@@ -5568,10 +6073,9 @@ Example:
     });
     window.addEventListener("blur", hideDragOverlay);
     els.selectAllFormats.addEventListener("change", () => {
-      state.selectedFormats = els.selectAllFormats.checked ? [...FORMATS] : [];
-      if (!state.selectedFormats.includes(state.previewFormat)) {
-        state.previewFormat = state.selectedFormats[0] ?? "cpa";
-      }
+      const formats = visibleFormats();
+      state.selectedFormats = els.selectAllFormats.checked ? FORMATS.filter((format) => state.selectedFormats.includes(format) || formats.includes(format)) : state.selectedFormats.filter((format) => !formats.includes(format));
+      syncPreviewFormat(currentAccountSource().accounts);
       persistPreferenceState();
       renderFormatControls();
       recomputeOutput();
@@ -5587,9 +6091,69 @@ Example:
       persistPreferenceState();
       recomputeOutput();
     });
+    els.refreshTokenToggle.addEventListener("change", () => {
+      state.includeRefreshToken = els.refreshTokenToggle.checked;
+      persistPreferenceState();
+      recomputeOutput();
+    });
     els.copyButton.addEventListener("click", () => {
       void copyPreview();
     });
+    els.previewOutput.addEventListener("mouseover", (event) => {
+      const trigger = jwtHoverTrigger(event.target);
+      if (trigger) {
+        scheduleJwtPopover(trigger);
+      }
+    });
+    els.previewOutput.addEventListener("mouseout", (event) => {
+      if (jwtHoverTrigger(event.target)) {
+        scheduleJwtPopoverHide();
+      }
+    });
+    els.previewOutput.addEventListener("focusin", (event) => {
+      const trigger = jwtHoverTrigger(event.target);
+      if (trigger) {
+        scheduleJwtPopover(trigger);
+      }
+    });
+    els.previewOutput.addEventListener("focusout", (event) => {
+      if (jwtHoverTrigger(event.target)) {
+        scheduleJwtPopoverHide();
+      }
+    });
+    els.previewOutput.addEventListener("click", (event) => {
+      const trigger = jwtHoverTrigger(event.target);
+      if (trigger) {
+        showJwtPopover(trigger);
+        jwtPopoverPinned = true;
+      }
+    });
+    els.jwtPopover.addEventListener("mouseenter", cancelJwtPopoverHide);
+    els.jwtPopover.addEventListener("mouseleave", scheduleJwtPopoverHide);
+    els.jwtPopoverCopy.addEventListener("click", () => {
+      const text = els.jwtPopoverBody.textContent;
+      if (text) {
+        void navigator.clipboard.writeText(text).then(() => {
+          showCopySuccessFeedback();
+        });
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        hideJwtPopover();
+      }
+    });
+    document.addEventListener("click", (event) => {
+      if (jwtPopoverPinned && !els.jwtPopover.contains(event.target) && !jwtHoverTrigger(event.target)) {
+        hideJwtPopover();
+      }
+    });
+    window.addEventListener("scroll", (event) => {
+      if (event.target instanceof HTMLElement && els.jwtPopover.contains(event.target)) {
+        return;
+      }
+      hideJwtPopover();
+    }, true);
     els.downloadButton.addEventListener("click", () => {
       void downloadCurrentPlan();
     });
@@ -5651,6 +6215,24 @@ Example:
       }
     });
   }
+  function appendChevrons() {
+    const outputTitle = document.getElementById("outputTitle");
+    if (outputTitle && !outputTitle.parentElement?.querySelector(".chevron-icon")) {
+      outputTitle.insertAdjacentHTML("afterend", CHEVRON_SVG);
+    }
+  }
+  function bindCollapsiblePanels() {
+    const titleLine = document.querySelector(".title-line");
+    const configArea = document.getElementById("outputConfigArea");
+    const resultHeader = document.querySelector(".result-header");
+    if (titleLine && configArea && resultHeader) {
+      titleLine.classList.add("collapsible-header");
+      titleLine.addEventListener("click", () => {
+        configArea.classList.toggle("is-collapsed");
+        resultHeader.classList.toggle("is-collapsed");
+      });
+    }
+  }
   function applyOutputOptionsFromUrl() {
     applyPreferences(parseOutputOptionsSearch(window.location.search));
   }
@@ -5679,6 +6261,9 @@ Example:
     if (options.allowSyntheticIdToken !== void 0) {
       state.allowSyntheticIdToken = options.allowSyntheticIdToken;
     }
+    if (options.includeRefreshToken !== void 0) {
+      state.includeRefreshToken = options.includeRefreshToken;
+    }
     if (options.locale) {
       state.locale = options.locale;
     }
@@ -5691,6 +6276,7 @@ Example:
   }
   function syncPreferenceControls() {
     els.fakeIdToggle.checked = state.allowSyntheticIdToken;
+    els.refreshTokenToggle.checked = state.includeRefreshToken;
     els.jsonlToggle.checked = state.outputTextMode === "jsonl";
   }
   function persistPreferenceState() {
@@ -5704,6 +6290,7 @@ Example:
       outputModes: state.outputModes,
       previewFormat: state.previewFormat,
       allowSyntheticIdToken: state.allowSyntheticIdToken,
+      includeRefreshToken: state.includeRefreshToken,
       locale: state.locale,
       themeMode: state.themeMode,
       forcedInputFormat: state.forcedInputFormat
@@ -5719,6 +6306,7 @@ Example:
         outputModes: state.outputModes,
         previewFormat: state.previewFormat,
         allowSyntheticIdToken: state.allowSyntheticIdToken,
+        includeRefreshToken: state.includeRefreshToken,
         locale: state.locale
       })
     );
@@ -5757,6 +6345,7 @@ Example:
     setText("exportFormatLabel", text.exportFormat);
     setText("jsonlToggleText", text.jsonlFormat);
     setText("fakeIdToggleText", text.fakeId);
+    setText("refreshTokenToggleText", text.refreshToken);
     setText("account-title", text.accountTitle);
     setText("clearAccountsButtonText", text.clearAccounts);
     setText("accountColumnIdentity", text.accountColumns[0]);
@@ -5764,6 +6353,7 @@ Example:
     setText("accountColumnExpires", text.accountColumns[2]);
     setText("accountColumnAction", text.accountColumns[3]);
     setText("copyBtnText", text.copyPreview);
+    appendChevrons();
     els.jsonInput.placeholder = text.inputPlaceholder;
     els.jsonInput.setAttribute("aria-label", text.inputAria);
     els.inputFormatSelect.setAttribute("aria-label", text.inputFormatAria);
@@ -5794,11 +6384,13 @@ Example:
     });
     bindTooltip(els.jsonlToggleContainer, text.jsonlTooltip);
     bindTooltip(els.fakeIdToggleContainer, text.fakeIdTooltip);
+    bindTooltip(els.refreshTokenToggleContainer, text.refreshTokenTooltip);
   }
   function renderFormatControls() {
     const text = webMessages();
+    const formats = visibleFormats();
     els.formatChecks.replaceChildren(
-      ...FORMATS.map((format) => {
+      ...formats.map((format) => {
         const input = document.createElement("input");
         input.type = "checkbox";
         input.id = `opt_${format}`;
@@ -5806,9 +6398,7 @@ Example:
         input.addEventListener("change", () => {
           state.selectedFormats = input.checked ? [...state.selectedFormats, format] : state.selectedFormats.filter((item) => item !== format);
           state.selectedFormats = FORMATS.filter((item) => state.selectedFormats.includes(item));
-          if (!state.selectedFormats.includes(state.previewFormat)) {
-            state.previewFormat = state.selectedFormats[0] ?? "cpa";
-          }
+          syncPreviewFormat(currentAccountSource().accounts);
           persistPreferenceState();
           renderFormatControls();
           recomputeOutput();
@@ -5816,7 +6406,15 @@ Example:
         const label = document.createElement("label");
         label.className = "format-option-label";
         label.htmlFor = `opt_${format}`;
-        label.textContent = FORMAT_LABELS[format];
+        const name = document.createElement("span");
+        name.className = "format-option-name";
+        name.textContent = FORMAT_LABELS[format];
+        const platforms = document.createElement("span");
+        platforms.className = "format-platforms";
+        for (const provider of formatProviders(format)) {
+          platforms.append(renderPlatformMark(provider));
+        }
+        label.append(name, platforms);
         const option = document.createElement("div");
         option.className = "format-option";
         option.append(input, label);
@@ -5832,7 +6430,7 @@ Example:
         return option;
       })
     );
-    const previewFormats = FORMATS.filter((format) => state.selectedFormats.includes(format));
+    const previewFormats = currentAccountSource().accounts.length === 0 ? [] : formats.filter((format) => state.selectedFormats.includes(format));
     if (previewFormats.length === 0) {
       els.previewTabsContainer.replaceChildren();
       els.previewOutput.removeAttribute("aria-labelledby");
@@ -5872,22 +6470,58 @@ Example:
       );
       syncPreviewTabs();
     }
-    els.selectAllFormats.checked = state.selectedFormats.length === FORMATS.length;
-    els.selectAllFormats.indeterminate = state.selectedFormats.length > 0 && state.selectedFormats.length < FORMATS.length;
+    const selectedVisibleCount = formats.filter((format) => state.selectedFormats.includes(format)).length;
+    els.selectAllFormats.checked = formats.length > 0 && selectedVisibleCount === formats.length;
+    els.selectAllFormats.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < formats.length;
+  }
+  function visibleFormats() {
+    return applicableFormats(currentAccountSource().accounts);
+  }
+  function applicableFormats(accounts) {
+    if (accounts.length === 0) {
+      return FORMATS;
+    }
+    return FORMATS.filter((format) => accounts.some((account) => formatSupportsProvider(format, account.provider)));
+  }
+  function currentEffectiveFormats(accounts) {
+    return effectiveFormats(state.selectedFormats, applicableFormats(accounts));
+  }
+  function formatSupportsProvider(format, provider) {
+    if (format === "cpa" || format === "sub2api") {
+      return provider === "openai" || provider === "xai";
+    }
+    return format === "grok" ? provider === "xai" : provider === "openai";
+  }
+  function formatProviders(format) {
+    if (format === "cpa" || format === "sub2api") {
+      return ["openai", "xai"];
+    }
+    return format === "grok" ? ["xai"] : ["openai"];
+  }
+  function renderPlatformMark(provider) {
+    const mark = document.createElement("span");
+    mark.className = `platform-mark platform-mark-${provider}`;
+    mark.setAttribute("aria-label", provider === "xai" ? "Grok" : "OpenAI");
+    mark.title = provider === "xai" ? "Grok" : "OpenAI";
+    mark.innerHTML = provider === "xai" ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>` : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`;
+    return mark;
   }
   function recompute() {
     state.draftParsed = state.draftSource ? parseSource(state.draftSource) : void 0;
     const draft = draftAccounts();
     const activeSource = currentAccountSource();
+    syncPreviewFormat(activeSource.accounts);
     refreshSerializedPreview(activeSource.accounts);
     renderInputError();
     renderInputFormatIndicator();
+    renderFormatControls();
     renderOutputHeader(activeSource);
     renderPreview();
     renderAccountTable(state.accounts, draft, activeSource.kind);
   }
   function recomputeOutput() {
     const activeSource = currentAccountSource();
+    syncPreviewFormat(activeSource.accounts);
     refreshSerializedPreview(activeSource.accounts);
     renderOutputHeader(activeSource);
     renderPreview();
@@ -6007,16 +6641,18 @@ Example:
   }
   function renderOutputHeader(activeSource) {
     const text = webMessages();
-    const activeCount = activeSource.accounts.length;
-    const canExport = canExportCurrentPlan(activeSource);
-    const zip = canExport && willDownloadZip(activeCount);
+    const activeFormats = currentEffectiveFormats(activeSource.accounts);
+    const exportAccounts = filterAccountsForFormats(activeSource.accounts, activeFormats);
+    const exportCount = exportAccounts.length;
+    const canExport = canExportCurrentPlan(exportAccounts, activeFormats);
+    const zip = canExport && willDownloadZip(exportCount, activeFormats);
     const fileTypeLabel = state.outputTextMode === "jsonl" ? "JSONL" : "JSON";
     const parts = [];
-    if (activeCount > 0) {
-      parts.push(text.accountCount(activeCount));
+    if (exportCount > 0) {
+      parts.push(text.accountCount(exportCount));
     }
     if (canExport) {
-      parts.push(state.selectedFormats.length === 1 ? FORMAT_LABELS[state.selectedFormats[0]] : text.formatCount(state.selectedFormats.length));
+      parts.push(activeFormats.length === 1 ? FORMAT_LABELS[activeFormats[0]] : text.formatCount(activeFormats.length));
       parts.push(zip ? "ZIP" : fileTypeLabel);
     }
     els.outputMeta.textContent = parts.join(" \xB7 ");
@@ -6024,9 +6660,9 @@ Example:
     els.addDraftButton.disabled = draft.length === 0 || Boolean(state.draftParsed?.error);
     els.copyButton.disabled = !currentPreviewFile();
     els.downloadButton.disabled = !canExport || state.downloadBusy;
-    els.downloadBtnText.textContent = state.downloadBusy ? text.exportPreparing : canExport ? text.exportAccounts(activeCount) : text.downloadDefault;
+    els.downloadBtnText.textContent = state.downloadBusy ? text.exportPreparing : canExport ? text.exportAccounts(exportCount) : text.downloadDefault;
     els.downloadButton.removeAttribute("title");
-    els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, activeCount, zip));
+    els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, exportCount, zip));
     renderTextModeControl();
     if (state.accounts.length === 0) {
       els.clearAccountsButton.hidden = true;
@@ -6038,6 +6674,7 @@ Example:
     const text = webMessages();
     const file = currentPreviewFile();
     els.previewOutput.classList.toggle("is-empty", !file);
+    hideJwtPopover();
     const filePathFooter = document.getElementById("previewFilePath");
     const fileTypeFooter = document.getElementById("previewFileType");
     if (!file) {
@@ -6047,7 +6684,7 @@ Example:
       if (fileTypeFooter) {
         fileTypeFooter.textContent = `${state.outputTextMode.toUpperCase()} | UTF-8`;
       }
-      els.previewOutput.textContent = state.selectedFormats.length === 0 ? text.previewNoFormat : text.previewNoInput;
+      els.previewOutput.textContent = currentEffectiveFormats(currentAccountSource().accounts).length === 0 ? text.previewNoFormat : text.previewNoInput;
       return;
     }
     if (filePathFooter) {
@@ -6103,12 +6740,13 @@ Example:
         if (sourceBadge) {
           labelCell.append(sourceBadge);
         }
-        row.append(
+        const cells = [
           labelCell,
-          accountCell(text.planType, account.planType ?? text.unknown),
-          accountCell(text.expiresAt, displayExpiresAt(account.expiresAt), account.expiresAt),
+          accountPlanCell(account),
+          accountExpiryCell(account),
           accountActionCell(account, index)
-        );
+        ];
+        row.append(...cells);
         return row;
       }),
       ...draft.map((account, index) => {
@@ -6133,12 +6771,13 @@ Example:
         if (sourceBadge) {
           labelCell.append(sourceBadge);
         }
-        row.append(
+        const cells = [
           labelCell,
-          accountCell(text.planType, account.planType ?? text.unknown),
-          accountCell(text.expiresAt, displayExpiresAt(account.expiresAt), account.expiresAt),
+          accountPlanCell(account),
+          accountExpiryCell(account),
           emptyActionCell()
-        );
+        ];
+        row.append(...cells);
         return row;
       })
     );
@@ -6212,6 +6851,12 @@ Example:
     }
     state.serializedFiles = buildSerializedPreviewFiles(accounts);
   }
+  function syncPreviewFormat(accounts) {
+    const formats = currentEffectiveFormats(accounts);
+    if (!formats.includes(state.previewFormat)) {
+      state.previewFormat = formats[0] ?? "cpa";
+    }
+  }
   function buildSerializedOutputFiles(accounts, formats) {
     if (accounts.length === 0 || formats.length === 0) {
       return [];
@@ -6219,13 +6864,14 @@ Example:
     return serializeOutputFiles(
       buildOutputPlan(accounts, formats, {
         outputModes: currentOutputModes(),
-        allowSyntheticIdToken: state.allowSyntheticIdToken
+        allowSyntheticIdToken: state.allowSyntheticIdToken,
+        includeRefreshToken: state.includeRefreshToken
       }),
       state.outputTextMode
     );
   }
   function buildSerializedPreviewFiles(accounts) {
-    if (!state.selectedFormats.includes(state.previewFormat) || accounts.length === 0) {
+    if (!currentEffectiveFormats(accounts).includes(state.previewFormat) || accounts.length === 0) {
       return [];
     }
     const boundedIndex = Math.min(state.selectedAccountIndex, accounts.length - 1);
@@ -6242,7 +6888,7 @@ Example:
     return accountCount > 1 && isPreviewFormatPerAccount(state.previewFormat);
   }
   function isPreviewFormatPerAccount(format) {
-    if (!state.selectedFormats.includes(format)) {
+    if (!currentEffectiveFormats(currentAccountSource().accounts).includes(format)) {
       return false;
     }
     if (state.outputTextMode === "jsonl") {
@@ -6574,19 +7220,21 @@ Example:
   async function downloadCurrentPlan() {
     const text = webMessages();
     const activeSource = currentAccountSource();
-    if (state.downloadBusy || !canExportCurrentPlan(activeSource)) {
+    const formats = currentEffectiveFormats(activeSource.accounts);
+    const exportAccounts = filterAccountsForFormats(activeSource.accounts, formats);
+    if (state.downloadBusy || !canExportCurrentPlan(exportAccounts, formats)) {
       return;
     }
-    const zip = willDownloadZip(activeSource.accounts.length);
+    const zip = willDownloadZip(exportAccounts.length, formats);
     if (zip) {
       state.downloadBusy = true;
       renderOutputHeader(activeSource);
       try {
         await nextAnimationFrame();
-        const serializedFiles = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats);
+        const serializedFiles = buildSerializedOutputFiles(exportAccounts, formats);
         const bytes = zipOutputFiles(serializedFiles);
         const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        const name = zipDownloadName(activeSource.accounts);
+        const name = zipDownloadName(exportAccounts);
         downloadBlob(new Blob([payload], { type: "application/zip" }), name);
         showToast(text.exportZipToast(name));
       } finally {
@@ -6595,7 +7243,7 @@ Example:
       }
       return;
     }
-    const file = buildSerializedOutputFiles(activeSource.accounts, state.selectedFormats)[0];
+    const file = buildSerializedOutputFiles(exportAccounts, formats)[0];
     if (!file) {
       return;
     }
@@ -6728,8 +7376,7 @@ Example:
     if (!value) {
       return webMessages().unknown;
     }
-    const isoMinute = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
-    return isoMinute ? `${isoMinute[1]} ${isoMinute[2]}` : value;
+    return displayCredentialExpiry(value, state.locale);
   }
   function accountCell(label, value, title) {
     const cell = document.createElement("span");
@@ -6739,6 +7386,34 @@ Example:
     cell.setAttribute("title", title ?? value);
     if (title && title !== value) {
       cell.setAttribute("aria-label", `${label}: ${title}`);
+    }
+    return cell;
+  }
+  function accountExpiryCell(account) {
+    const text = webMessages();
+    const value = displayExpiresAt(account.expiresAt);
+    const cell = accountCell(text.expiresAt, value, account.expiresAt);
+    cell.classList.add("account-expiry-cell");
+    cell.classList.toggle("is-expired", isExpiredCredential(account.expiresAt));
+    return cell;
+  }
+  function accountPlanCell(account) {
+    const text = webMessages();
+    const cell = document.createElement("span");
+    cell.className = "account-cell account-plan-cell";
+    cell.dataset.label = text.planType;
+    if (account.provider !== "unknown") {
+      const badge = renderPlatformMark(account.provider);
+      badge.style.marginRight = "6px";
+      badge.style.flexShrink = "0";
+      cell.append(badge);
+    }
+    const planVal = account.planType?.trim();
+    const isUnknown = !planVal || planVal === "unknown" || planVal === text.unknown;
+    if (!isUnknown) {
+      const planSpan = document.createElement("span");
+      planSpan.textContent = planVal;
+      cell.append(planSpan);
     }
     return cell;
   }
@@ -6775,20 +7450,20 @@ Example:
   function outputFallbackName() {
     return state.outputTextMode === "jsonl" ? "authconv.jsonl" : "authconv.json";
   }
-  function canExportCurrentPlan(activeSource) {
-    return state.selectedFormats.length > 0 && activeSource.accounts.length > 0;
+  function canExportCurrentPlan(accounts, formats) {
+    return formats.length > 0 && accounts.length > 0;
   }
-  function willDownloadZip(accountCount) {
-    if (accountCount <= 0 || state.selectedFormats.length === 0) {
+  function willDownloadZip(accountCount, formats) {
+    if (accountCount <= 0 || formats.length === 0) {
       return false;
     }
-    if (state.selectedFormats.length > 1) {
+    if (formats.length > 1) {
       return true;
     }
     if (state.outputTextMode === "jsonl") {
       return false;
     }
-    const format = state.selectedFormats[0];
+    const format = formats[0];
     if (isMergedFormat(format) && currentOutputModes()[format] !== "single") {
       return false;
     }
@@ -6810,12 +7485,103 @@ Example:
         } else if (match === "null") {
           className = "json-null";
         }
+        if (className === "json-string" && match.startsWith('"') && match.endsWith('"')) {
+          const token = match.slice(1, -1);
+          if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(token) && jwtPopoverText(token)) {
+            return `"<span class="json-string jwt-token-hoverable" data-jwt="${token}" tabindex="0" aria-label="${escapeHtml(webMessages().jwtHoverAria)}">${token}</span>"`;
+          }
+        }
         if (className === "json-key") {
           return `<span class="${className}">${match.slice(0, -1)}</span>:`;
         }
         return `<span class="${className}">${match}</span>`;
       }
     );
+  }
+  function jwtHoverTrigger(target) {
+    return target instanceof HTMLElement ? target.closest(".jwt-token-hoverable") ?? void 0 : void 0;
+  }
+  function scheduleJwtPopover(trigger) {
+    window.clearTimeout(jwtPopoverShowTimer);
+    cancelJwtPopoverHide();
+    jwtPopoverShowTimer = window.setTimeout(() => showJwtPopover(trigger), 250);
+  }
+  function showJwtPopover(trigger) {
+    window.clearTimeout(jwtPopoverShowTimer);
+    cancelJwtPopoverHide();
+    const token = trigger.dataset.jwt;
+    const preview = token ? jwtPopoverText(token) : void 0;
+    if (!preview) {
+      return;
+    }
+    jwtPopoverTrigger?.removeAttribute("aria-describedby");
+    jwtPopoverTrigger = trigger;
+    trigger.setAttribute("aria-describedby", "jwtPopover");
+    els.jwtPopoverBody.innerHTML = highlightJson(preview);
+    els.jwtPopover.hidden = false;
+    positionJwtPopover(trigger);
+    requestAnimationFrame(() => els.jwtPopover.classList.add("visible"));
+  }
+  function positionJwtPopover(trigger) {
+    const gap = 8;
+    const viewportPadding = 8;
+    const triggerRect = trigger.getBoundingClientRect();
+    const popoverRect = els.jwtPopover.getBoundingClientRect();
+    const maxLeft = Math.max(viewportPadding, window.innerWidth - popoverRect.width - viewportPadding);
+    const left = Math.min(Math.max(triggerRect.left, viewportPadding), maxLeft);
+    const below = triggerRect.bottom + gap;
+    const above = triggerRect.top - popoverRect.height - gap;
+    const top = below + popoverRect.height <= window.innerHeight - viewportPadding ? below : Math.max(viewportPadding, above);
+    els.jwtPopover.style.left = `${Math.round(left)}px`;
+    els.jwtPopover.style.top = `${Math.round(top)}px`;
+  }
+  function cancelJwtPopoverHide() {
+    window.clearTimeout(jwtPopoverHideTimer);
+  }
+  function scheduleJwtPopoverHide() {
+    if (jwtPopoverPinned) {
+      return;
+    }
+    window.clearTimeout(jwtPopoverShowTimer);
+    window.clearTimeout(jwtPopoverHideTimer);
+    jwtPopoverHideTimer = window.setTimeout(hideJwtPopover, 800);
+  }
+  function hideJwtPopover() {
+    window.clearTimeout(jwtPopoverShowTimer);
+    window.clearTimeout(jwtPopoverHideTimer);
+    els.jwtPopover.classList.remove("visible");
+    jwtPopoverTrigger?.removeAttribute("aria-describedby");
+    jwtPopoverTrigger = void 0;
+    jwtPopoverPinned = false;
+    const copyBtn = els.jwtPopoverCopy;
+    copyBtn.classList.remove("copied");
+    const copyIcon = copyBtn.querySelector(".copy-icon");
+    const checkIcon = copyBtn.querySelector(".check-icon");
+    if (copyIcon && checkIcon) {
+      copyIcon.style.display = "block";
+      checkIcon.style.display = "none";
+    }
+    window.setTimeout(() => {
+      if (!els.jwtPopover.classList.contains("visible")) {
+        els.jwtPopover.hidden = true;
+      }
+    }, 160);
+  }
+  function showCopySuccessFeedback() {
+    const copyBtn = els.jwtPopoverCopy;
+    const copyIcon = copyBtn.querySelector(".copy-icon");
+    const checkIcon = copyBtn.querySelector(".check-icon");
+    if (!copyIcon || !checkIcon) {
+      return;
+    }
+    copyBtn.classList.add("copied");
+    copyIcon.style.display = "none";
+    checkIcon.style.display = "block";
+    window.setTimeout(() => {
+      copyBtn.classList.remove("copied");
+      copyIcon.style.display = "block";
+      checkIcon.style.display = "none";
+    }, 1200);
   }
   function escapeHtml(text) {
     return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");

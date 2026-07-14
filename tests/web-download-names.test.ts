@@ -4,6 +4,7 @@ import { zipDownloadName } from "../src/download-names.js";
 
 function account(input: Partial<NormalizedAccount>): NormalizedAccount {
   return {
+    provider: "openai",
     sourceName: "test",
     sourcePath: "test.json",
     warnings: [],

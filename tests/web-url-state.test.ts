@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { outputOptionsUrl, parseOutputOptionsSearch } from "../src/web/url-state.js";
 
 describe("web URL output options", () => {
+  it("round-trips Grok selection and output mode", () => {
+    const url = outputOptionsUrl("https://example.test/tool", {
+      selectedFormats: ["grok", "cpa"],
+      outputTextMode: "json",
+      outputModes: { grok: "single" },
+      previewFormat: "grok",
+    });
+    expect(parseOutputOptionsSearch(new URL(url).search)).toMatchObject({
+      selectedFormats: ["cpa", "grok"],
+      outputModes: { sub2api: "merged", codex2api: "merged", grok: "single" },
+      previewFormat: "grok",
+    });
+  });
   it("parses output options from query parameters", () => {
     expect(
       parseOutputOptionsSearch(
@@ -32,7 +45,7 @@ describe("web URL output options", () => {
         locale: "en",
       }),
     ).toBe(
-      "https://example.test/tool?keep=1&format=cpa%2Csub2api&text=jsonl&mode=sub2api%3Asingle%2Ccodex2api%3Asingle&preview=cpa&lang=en#local",
+      "https://example.test/tool?keep=1&format=cpa%2Csub2api&text=jsonl&mode=sub2api%3Asingle%2Ccodex2api%3Asingle%2Cgrok%3Asingle&preview=cpa&lang=en#local",
     );
   });
 
@@ -45,7 +58,7 @@ describe("web URL output options", () => {
         previewFormat: "cpa",
         locale: "zh",
       }),
-    ).toBe("https://example.test/tool?format=cpa&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged&preview=cpa&lang=zh");
+    ).toBe("https://example.test/tool?format=cpa&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged%2Cgrok%3Amerged&preview=cpa&lang=zh");
   });
 
   it("keeps an explicitly empty format selection", () => {
@@ -56,7 +69,7 @@ describe("web URL output options", () => {
         outputModes: {},
         previewFormat: "cpa",
       }),
-    ).toBe("https://example.test/tool?format=none&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged&preview=cpa");
+    ).toBe("https://example.test/tool?format=none&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged%2Cgrok%3Amerged&preview=cpa");
     expect(parseOutputOptionsSearch("?format=none")).toEqual({
       selectedFormats: [],
     });
@@ -77,6 +90,21 @@ describe("web URL output options", () => {
         previewFormat: "cpa",
         allowSyntheticIdToken: false,
       }),
-    ).toBe("https://example.test/tool?format=none&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged&preview=cpa&fakeid=false");
+    ).toBe("https://example.test/tool?format=none&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged%2Cgrok%3Amerged&preview=cpa&fakeid=false");
+  });
+
+  it("round-trips the refresh_token output option", () => {
+    expect(parseOutputOptionsSearch("?refresh=false")).toEqual({
+      includeRefreshToken: false,
+    });
+    expect(
+      outputOptionsUrl("https://example.test/tool", {
+        selectedFormats: ["cpa"],
+        outputTextMode: "json",
+        outputModes: {},
+        previewFormat: "cpa",
+        includeRefreshToken: false,
+      }),
+    ).toBe("https://example.test/tool?format=cpa&text=json&mode=sub2api%3Amerged%2Ccodex2api%3Amerged%2Cgrok%3Amerged&preview=cpa&refresh=false");
   });
 });

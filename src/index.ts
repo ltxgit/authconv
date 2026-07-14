@@ -1,4 +1,4 @@
-export { buildOutputPlan, effectiveOutputModes, outputFileText, serializeOutputFiles, shouldZip } from "./file-plan.js";
+export { buildOutputPlan, effectiveOutputModes, filterAccountsForFormats, outputFileText, serializeOutputFiles, shouldZip } from "./file-plan.js";
 export { parseFormatList } from "./formats.js";
 export { FORMAT_LABELS, detectCliLocale, detectWebLocale, inputFormatLabel, localeName, messagesFor, normalizeLocale } from "./i18n.js";
 export { parseInputPayload, parseInputPayloadWithMeta } from "./json-input.js";
@@ -10,8 +10,10 @@ export type {
   CodexManagerRenderedAccount,
   CodexRenderedAuth,
   CpaRenderedAccount,
+  CpaXaiRenderedAccount,
   BuildOutputPlanOptions,
   InputFormat,
+  Provider,
   Locale,
   NormalizedAccount,
   NormalizeOptions,
@@ -29,4 +31,5 @@ export type {
   Sub2ApiRenderedCredentials,
   Sub2ApiRenderedData,
   Sub2ApiRenderedExtra,
+  GrokRenderedAuth,
 } from "./types.js";

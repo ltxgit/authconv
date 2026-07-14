@@ -1,0 +1,12 @@
+{
+  "type": "xai",
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsInN1YiI6InhhaS1maXh0dXJlLXVzZXIiLCJjbGllbnRfaWQiOiJiMWEwMDQ5Mi0wNzNhLTQ3ZWEtODE2Zi00YzMyOTI2NGE4MjgiLCJzY29wZSI6Im9wZW5pZCBwcm9maWxlIGVtYWlsIG9mZmxpbmVfYWNjZXNzIGdyb2stY2xpOmFjY2VzcyBhcGk6YWNjZXNzIiwiaWF0IjoxNzgzNzg5MjE4LCJleHAiOjE3ODM4MTA4MTh9.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+  "refresh_token": "xai-fixture-refresh-token",
+  "id_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2F1dGgueC5haSIsImF1ZCI6ImIxYTAwNDkyLTA3M2EtNDdlYS04MTZmLTRjMzI5MjY0YTgyOCIsInN1YiI6InhhaS1maXh0dXJlLXVzZXIiLCJlbWFpbCI6Imdyb2stZml4dHVyZUBleGFtcGxlLmNvbSIsImlhdCI6MTc4Mzc4OTIxOCwiZXhwIjoxNzgzODEwODE4fQ.c3ludGhldGljLXRlc3Qtc2lnbmF0dXJl",
+  "token_type": "Bearer",
+  "expires_in": 21600,
+  "expired": "2026-07-11T23:00:18.000Z",
+  "last_refresh": "2026-07-11T17:00:18.000Z",
+  "email": "grok-fixture@example.com",
+  "sub": "xai-fixture-user"
+}

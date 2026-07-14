@@ -10,9 +10,10 @@ describe("web output modes", () => {
   });
 
   it("forces merge-capable formats to one account per JSONL row", () => {
-    expect(effectiveWebOutputModes({ sub2api: "merged", codex2api: "merged" }, "jsonl")).toEqual({
+    expect(effectiveWebOutputModes({ sub2api: "merged", codex2api: "merged", grok: "merged" }, "jsonl")).toEqual({
       sub2api: "single",
       codex2api: "single",
+      grok: "single",
     });
   });
 });

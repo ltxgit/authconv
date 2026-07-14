@@ -9,13 +9,14 @@ import type {
   SerializedOutputFile,
 } from "./types.js";
 
-const MERGED_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api"]);
+const MERGED_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 const FORMAT_FILE_PREFIX: Record<OutputFormat, string> = {
   cpa: "cpa",
   sub2api: "sub2api",
   codex2api: "codex2api",
   codexmanager: "codex-manager",
   codex: "codex",
+  grok: "grok",
 };
 
 export function buildOutputPlan(
@@ -28,21 +29,25 @@ export function buildOutputPlan(
   const useFormatFolders = formats.length > 1;
 
   for (const format of formats) {
+    const formatAccounts = accounts.filter((account) => supportsFormat(account, format));
+    if (formatAccounts.length === 0) {
+      continue;
+    }
     const prefix = useFormatFolders ? `${format}/` : "";
     if (MERGED_FORMATS.has(format) && options.outputModes?.[format] !== "single") {
-      const name = accounts.length === 1
-        ? singleAccountName(format, accounts[0])
-        : mergedName(format, accounts.length, "json");
+      const name = formatAccounts.length === 1
+        ? singleAccountName(format, formatAccounts[0])
+        : mergedName(format, formatAccounts.length, "json");
       files.push({
         path: uniquePath(`${prefix}${name}`, used),
         format,
-        content: renderFormat(accounts, format, options),
-        accountCount: accounts.length,
+        content: renderFormat(formatAccounts, format, options),
+        accountCount: formatAccounts.length,
       });
       continue;
     }
 
-    accounts.forEach((account) => {
+    formatAccounts.forEach((account) => {
       files.push({
         path: uniquePath(`${prefix}${singleAccountName(format, account)}`, used),
         format,
@@ -53,6 +58,23 @@ export function buildOutputPlan(
   }
 
   return files;
+}
+
+export function filterAccountsForFormats(
+  accounts: NormalizedAccount[],
+  formats: OutputFormat[],
+): NormalizedAccount[] {
+  return accounts.filter((account) => formats.some((format) => supportsFormat(account, format)));
+}
+
+function supportsFormat(account: NormalizedAccount, format: OutputFormat): boolean {
+  if (format === "cpa" || format === "sub2api") {
+    return account.provider === "openai" || account.provider === "xai";
+  }
+  if (format === "grok") {
+    return account.provider === "xai";
+  }
+  return account.provider === "openai";
 }
 
 export function outputFileText(file: OutputFile): string {
@@ -98,6 +120,7 @@ export function effectiveOutputModes(outputModes: OutputModes, outputTextMode: O
     ...outputModes,
     sub2api: "single",
     codex2api: "single",
+    grok: "single",
   };
 }
 
@@ -119,7 +142,9 @@ function replaceExtension(path: string, nextExtension: string): string {
 
 function singleAccountName(format: OutputFormat, account: NormalizedAccount): string {
   const identity = safeFileSegment(account.email ?? account.name ?? "unknown");
-  const accountId = account.chatgptAccountId ?? account.accountId;
+  const accountId = account.provider === "xai"
+    ? account.userId ?? account.principalId
+    : account.chatgptAccountId ?? account.accountId;
   const idSegment = accountId ? safeFileSegment(accountId.slice(0, 12)) : "";
   return idSegment
     ? `${FORMAT_FILE_PREFIX[format]}_${identity}_${idSegment}.json`

@@ -52,6 +52,11 @@ function firstRecord(records, key) {
   return void 0;
 }
 
+// src/xai.ts
+var XAI_ISSUER = "https://auth.x.ai";
+var GROK_CLI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
+var XAI_TOKEN_ENDPOINT = `${XAI_ISSUER}/oauth2/token`;
+
 // src/renderers.ts
 function renderFormat(accounts, format, options = {}) {
   switch (format) {
@@ -65,9 +70,14 @@ function renderFormat(accounts, format, options = {}) {
       return accounts.length === 1 ? renderCodexManagerAccount(accounts[0], options) : accounts.map((account) => renderCodexManagerAccount(account, options));
     case "codex":
       return accounts.length === 1 ? renderCodexAuth(accounts[0], options) : accounts.map((account) => renderCodexAuth(account, options));
+    case "grok":
+      return renderGrokAuth(accounts, options);
   }
 }
 function renderCpaAccount(account, options) {
+  if (account.provider === "xai") {
+    return renderCpaXaiAccount(account, options);
+  }
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   const rendered = {
     type: "codex",
@@ -76,7 +86,7 @@ function renderCpaAccount(account, options) {
     plan_type: account.planType ?? "",
     id_token: allowSynthetic ? account.idToken ?? "" : account.idTokenSynthetic ? "" : account.idToken ?? "",
     access_token: account.accessToken ?? "",
-    refresh_token: account.refreshToken ?? "",
+    ...shouldIncludeRefreshToken(options) ? { refresh_token: account.refreshToken ?? "" } : {},
     expired: account.expiresAt ?? "",
     last_refresh: account.lastRefresh ?? (options.now ?? /* @__PURE__ */ new Date()).toISOString(),
     disabled: false
@@ -89,12 +99,32 @@ function renderCpaAccount(account, options) {
   }
   return rendered;
 }
+function renderCpaXaiAccount(account, options) {
+  const rendered = compactObject({
+    type: "xai",
+    access_token: account.accessToken,
+    refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
+    id_token: account.idToken,
+    token_type: account.tokenType,
+    expires_in: account.expiresIn,
+    expired: account.expiresAt,
+    last_refresh: account.lastRefresh ?? account.issuedAt,
+    email: account.email,
+    sub: account.userId ?? account.principalId,
+    base_url: account.baseUrl,
+    token_endpoint: account.tokenEndpoint,
+    redirect_uri: account.redirectUri,
+    disabled: account.disabled,
+    headers: account.headers
+  });
+  return rendered;
+}
 function renderCodex2ApiAccount(account, options) {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   return compactObject({
     name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId,
     email: account.email,
-    refresh_token: account.refreshToken,
+    refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
     session_token: account.sessionToken,
     access_token: account.accessToken,
     id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
@@ -115,16 +145,20 @@ function renderSub2Api(accounts, options) {
 }
 function renderSub2ApiAccount(account, options) {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
+  const isOpenAI = account.provider === "openai";
   const credentials = compactObject({
     access_token: account.accessToken,
-    refresh_token: account.refreshToken,
-    session_token: account.sessionToken,
+    refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
+    session_token: isOpenAI ? account.sessionToken : void 0,
     id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
     expires_at: account.expiresAt,
     email: account.email,
-    chatgpt_account_id: account.chatgptAccountId,
-    chatgpt_user_id: account.chatgptUserId,
-    plan_type: account.planType
+    chatgpt_account_id: isOpenAI ? account.chatgptAccountId : void 0,
+    chatgpt_user_id: isOpenAI ? account.chatgptUserId : void 0,
+    plan_type: isOpenAI ? account.planType : void 0,
+    user_id: account.provider === "xai" ? account.userId : void 0,
+    client_id: account.provider === "xai" ? account.clientId : void 0,
+    base_url: account.provider === "xai" ? account.baseUrl : void 0
   });
   const extra = compactObject({
     import_source: "authconv",
@@ -132,7 +166,7 @@ function renderSub2ApiAccount(account, options) {
   });
   return compactObject({
     name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId ?? "authconv-account",
-    platform: "openai",
+    platform: account.provider === "xai" ? "grok" : "openai",
     type: "oauth",
     credentials,
     extra,
@@ -141,12 +175,32 @@ function renderSub2ApiAccount(account, options) {
     auto_pause_on_expired: true
   });
 }
+function renderGrokAuth(accounts, options) {
+  return Object.fromEntries(accounts.map((account) => {
+    const clientId = account.clientId ?? GROK_CLI_CLIENT_ID;
+    const userId = account.userId ?? account.principalId ?? "";
+    const key = accounts.length === 1 ? `${XAI_ISSUER}::${clientId}` : `${XAI_ISSUER}::${clientId}::${userId}`;
+    return [key, compactObject({
+      key: account.accessToken ?? "",
+      auth_mode: "oidc",
+      create_time: account.createTime ?? account.issuedAt,
+      user_id: userId,
+      email: account.email ?? "",
+      principal_type: account.principalType ?? "User",
+      principal_id: account.principalId ?? userId,
+      refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken ?? "" : void 0,
+      expires_at: account.expiresAt,
+      oidc_issuer: XAI_ISSUER,
+      oidc_client_id: clientId
+    })];
+  }));
+}
 function renderCodexManagerAccount(account, options) {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   return {
     tokens: compactObject({
       access_token: account.accessToken,
-      refresh_token: account.refreshToken,
+      refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : void 0,
       id_token: allowSynthetic ? account.idToken : account.idTokenSynthetic ? void 0 : account.idToken,
       account_id: account.accountId,
       chatgpt_account_id: account.chatgptAccountId
@@ -168,39 +222,47 @@ function renderCodexAuth(account, options) {
     tokens: {
       id_token: allowSynthetic ? account.idToken ?? "" : account.idTokenSynthetic ? "" : account.idToken ?? "",
       access_token: account.accessToken ?? "",
-      refresh_token: account.refreshToken ?? "",
+      ...shouldIncludeRefreshToken(options) ? { refresh_token: account.refreshToken ?? "" } : {},
       account_id: account.accountId ?? account.chatgptAccountId ?? ""
     },
     last_refresh: account.lastRefresh ?? (options.now ?? /* @__PURE__ */ new Date()).toISOString()
   };
 }
+function shouldIncludeRefreshToken(options) {
+  return options.includeRefreshToken !== false;
+}
 
 // src/file-plan.ts
-var MERGED_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api"]);
+var MERGED_FORMATS = /* @__PURE__ */ new Set(["sub2api", "codex2api", "grok"]);
 var FORMAT_FILE_PREFIX = {
   cpa: "cpa",
   sub2api: "sub2api",
   codex2api: "codex2api",
   codexmanager: "codex-manager",
-  codex: "codex"
+  codex: "codex",
+  grok: "grok"
 };
 function buildOutputPlan(accounts, formats, options = {}) {
   const used = /* @__PURE__ */ new Map();
   const files = [];
   const useFormatFolders = formats.length > 1;
   for (const format of formats) {
+    const formatAccounts = accounts.filter((account) => supportsFormat(account, format));
+    if (formatAccounts.length === 0) {
+      continue;
+    }
     const prefix = useFormatFolders ? `${format}/` : "";
     if (MERGED_FORMATS.has(format) && options.outputModes?.[format] !== "single") {
-      const name = accounts.length === 1 ? singleAccountName(format, accounts[0]) : mergedName(format, accounts.length, "json");
+      const name = formatAccounts.length === 1 ? singleAccountName(format, formatAccounts[0]) : mergedName(format, formatAccounts.length, "json");
       files.push({
         path: uniquePath(`${prefix}${name}`, used),
         format,
-        content: renderFormat(accounts, format, options),
-        accountCount: accounts.length
+        content: renderFormat(formatAccounts, format, options),
+        accountCount: formatAccounts.length
       });
       continue;
     }
-    accounts.forEach((account) => {
+    formatAccounts.forEach((account) => {
       files.push({
         path: uniquePath(`${prefix}${singleAccountName(format, account)}`, used),
         format,
@@ -210,6 +272,18 @@ function buildOutputPlan(accounts, formats, options = {}) {
     });
   }
   return files;
+}
+function filterAccountsForFormats(accounts, formats) {
+  return accounts.filter((account) => formats.some((format) => supportsFormat(account, format)));
+}
+function supportsFormat(account, format) {
+  if (format === "cpa" || format === "sub2api") {
+    return account.provider === "openai" || account.provider === "xai";
+  }
+  if (format === "grok") {
+    return account.provider === "xai";
+  }
+  return account.provider === "openai";
 }
 function outputFileText(file) {
   return `${JSON.stringify(file.content, null, 2)}
@@ -244,7 +318,8 @@ function effectiveOutputModes(outputModes, outputTextMode) {
   return {
     ...outputModes,
     sub2api: "single",
-    codex2api: "single"
+    codex2api: "single",
+    grok: "single"
   };
 }
 function jsonlPath(files) {
@@ -262,7 +337,7 @@ function replaceExtension(path2, nextExtension) {
 }
 function singleAccountName(format, account) {
   const identity = safeFileSegment(account.email ?? account.name ?? "unknown");
-  const accountId = account.chatgptAccountId ?? account.accountId;
+  const accountId = account.provider === "xai" ? account.userId ?? account.principalId : account.chatgptAccountId ?? account.accountId;
   const idSegment = accountId ? safeFileSegment(accountId.slice(0, 12)) : "";
   return idSegment ? `${FORMAT_FILE_PREFIX[format]}_${identity}_${idSegment}.json` : `${FORMAT_FILE_PREFIX[format]}_${identity}.json`;
 }
@@ -288,7 +363,7 @@ function uniquePath(path2, used) {
 }
 
 // src/types.ts
-var ALL_FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex"];
+var ALL_FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"];
 
 // src/formats.ts
 function parseFormatList(values, options = {}) {
@@ -344,6 +419,7 @@ var INPUT_FORMAT_LABELS = {
     session: "ChatGPT Session",
     sub2api: "sub2api",
     cpa: "CPA",
+    grok: "Grok / xAI",
     codexmanager: "Codex Manager",
     codex2api: "Codex2Api",
     codex: "Codex Auth",
@@ -353,6 +429,7 @@ var INPUT_FORMAT_LABELS = {
     session: "ChatGPT Session",
     sub2api: "sub2api",
     cpa: "CPA",
+    grok: "Grok / xAI",
     codexmanager: "Codex Manager",
     codex2api: "Codex2Api",
     codex: "Codex Auth",
@@ -364,7 +441,8 @@ var FORMAT_LABELS = {
   sub2api: "sub2api",
   codex2api: "codex2api",
   codexmanager: "Codex Manager",
-  codex: "Codex Auth"
+  codex: "Codex Auth",
+  grok: "Grok CLI"
 };
 function plural(count, singular, pluralForm = `${singular}s`) {
   return `${count} ${count === 1 ? singular : pluralForm}`;
@@ -391,13 +469,14 @@ var MESSAGES = {
   <path...>              \u8F93\u5165 JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\u8DEF\u5F84\uFF0C\u53EF\u4F20\u591A\u4E2A
   -i, --input <path>     \u6307\u5B9A JSON/JSONL/ZIP \u6587\u4EF6\u6216\u76EE\u5F55\uFF08\u53EF\u91CD\u590D\uFF09
   --stdin                \u4ECE\u6807\u51C6\u8F93\u5165\u8BFB\u53D6\uFF08\u4E0E -i \u4E92\u65A5\uFF09
-  -f, --format <list>    \u8F93\u51FA\u683C\u5F0F\uFF0C\u652F\u6301\u9017\u53F7\u5206\u9694\u6216\u91CD\u590D\u4F20\u5165\uFF1B\u53EF\u7528 cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api \u8F93\u51FA\u65B9\u5F0F\uFF1Amerged \u6216 single
+  -f, --format <list>    \u8F93\u51FA\u683C\u5F0F\uFF0C\u652F\u6301\u9017\u53F7\u5206\u9694\u6216\u91CD\u590D\u4F20\u5165\uFF1B\u53EF\u7528 cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok \u8F93\u51FA\u65B9\u5F0F\uFF1Amerged \u6216 single
   -o, --out-dir <path>   \u8F93\u51FA\u76EE\u5F55\uFF0C\u9ED8\u8BA4 output
   --jsonl                \u8F93\u51FA JSONL \u683C\u5F0F\uFF08\u6BCF\u8D26\u53F7\u4E00\u884C\uFF09
   --zip                  \u5199\u5165\u4E00\u4E2A ZIP \u6587\u4EF6\uFF0C\u538B\u7F29\u5305\u5185\u4FDD\u7559\u5F53\u524D\u8F93\u51FA\u76EE\u5F55\u7ED3\u6784
   --stdout               \u5355\u683C\u5F0F\u5355\u6587\u4EF6\u8F93\u51FA\u5230 stdout
   --no-fake-id           \u8F93\u51FA\u4E0D\u5305\u542B\u5408\u6210 id_token\uFF08\u9ED8\u8BA4\u4F1A\u8F93\u51FA\uFF09
+  --no-refresh-token     \u8F93\u51FA\u4E0D\u5305\u542B refresh_token\uFF08\u9ED8\u8BA4\u4F1A\u8F93\u51FA\uFF09
   --lang <zh|en>         \u4EBA\u7C7B\u53EF\u8BFB\u8F93\u51FA\u8BED\u8A00\uFF0C\u672A\u68C0\u6D4B\u5230\u65F6\u9ED8\u8BA4\u82F1\u6587
   --inspect              \u53EA\u6253\u5370\u8D26\u53F7\u6458\u8981\uFF0C\u4E0D\u4EA7\u51FA\u6587\u4EF6
   --dry-run              \u53EA\u6253\u5370\u5199\u5165\u8BA1\u5212\uFF0C\u4E0D\u5B9E\u9645\u5199\u76D8
@@ -410,12 +489,13 @@ var MESSAGES = {
       inputPathSource: "\u8F93\u5165\u8DEF\u5F84",
       errors: {
         noAccounts: "\u672A\u627E\u5230\u53EF\u8F6C\u6362\u8D26\u53F7",
+        noApplicableFormats: "\u6240\u9009\u683C\u5F0F\u4E0D\u9002\u7528\u4E8E\u5DF2\u8BC6\u522B\u8D26\u53F7\uFF0C\u672A\u751F\u6210\u4EFB\u4F55\u6587\u4EF6",
         cwdMissing: "\u5F53\u524D\u76EE\u5F55\u4E0D\u5B58\u5728",
         unknownArg: (arg) => `\u672A\u77E5\u53C2\u6570: ${arg}`,
         missingInput: "\u672A\u6307\u5B9A\u8F93\u5165\uFF08\u9700\u8981 <path>\u3001-i \u6216 --stdin\uFF09",
         invalidModeSyntax: (value) => `--mode \u683C\u5F0F\u9519\u8BEF: ${value}\uFF08\u5E94\u4E3A format=merged|single\uFF09`,
         unknownOutputFormat: (format) => `\u672A\u77E5\u8F93\u51FA\u683C\u5F0F: ${format}`,
-        unsupportedModeFormat: (format) => `--mode \u4EC5\u652F\u6301 sub2api \u6216 codex2api: ${format}`,
+        unsupportedModeFormat: (format) => `--mode \u4EC5\u652F\u6301 sub2api\u3001codex2api \u6216 grok: ${format}`,
         unknownOutputMode: (mode) => `--mode \u5305\u542B\u672A\u77E5\u8F93\u51FA\u65B9\u5F0F: ${mode}`,
         stdinConflict: (source) => `${source} \u4E0E --stdin \u51B2\u7A81\uFF0C\u53EA\u80FD\u6307\u5B9A\u4E00\u4E2A\u8F93\u5165\u6765\u6E90`,
         stdinPathConflict: "--stdin \u4E0E\u5DF2\u6709\u8F93\u5165\u8DEF\u5F84\u51B2\u7A81\uFF0C\u53EA\u80FD\u6307\u5B9A\u4E00\u4E2A\u8F93\u5165\u6765\u6E90",
@@ -457,16 +537,12 @@ var MESSAGES = {
       invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: \u8F93\u5165\u4E0D\u7B26\u5408 ${inputFormat} \u8F93\u5165\u683C\u5F0F`,
       noTokens: (sourceName) => `${sourceName}: \u672A\u627E\u5230\u53EF\u8BC6\u522B token \u5B57\u6BB5`,
       invalidExpiry: (sourceName, value) => `${sourceName}: \u8FC7\u671F\u65F6\u95F4\u683C\u5F0F\u9519\u8BEF ("${value}")`,
-      syntheticIdToken: (sourceName) => `${sourceName}: \u5DF2\u751F\u6210\u5408\u6210 id_token`,
-      missingIdToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 id_token`,
-      missingRefreshToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 refresh_token`,
-      missingAccessToken: (sourceName) => `${sourceName}: \u7F3A\u5C11 access_token`,
       claimOverride: (sourceName, fields) => `${sourceName}: access_token claim \u4E0D\u4E00\u81F4\uFF0C\u8986\u76D6\u5B57\u6BB5: ${fields.join(",")}`,
       claimSanity: (sourceName, fields) => `${sourceName}: JWT claim \u6821\u9A8C\u5F02\u5E38: ${fields.join(",")}`
     },
     web: {
-      pageTitle: "GPT Auth \u8F6C\u6362 | \u7EAF\u672C\u5730\u5B89\u5168\u51ED\u636E\u591A\u683C\u5F0F\u5904\u7406\u5DE5\u5177",
-      appTitle: "GPT Auth \u8F6C\u6362",
+      pageTitle: "Auth Converter | OpenAI / Grok OAuth \u51ED\u8BC1\u8F6C\u6362\u5DE5\u5177",
+      appTitle: "Auth Converter",
       notice: "\u7EAF\u672C\u5730\u5B89\u5168\u8F6C\u6362\uFF0C\u6240\u6709\u8FD0\u7B97\u5728\u5F53\u524D\u6D4F\u89C8\u5668\u4E2D\u5B8C\u6210\u3002",
       dragTitle: "\u91CA\u653E\u4EE5\u5BFC\u5165 JSON / JSONL / ZIP \u51ED\u636E",
       dragSub: "\u677E\u5F00\u6DFB\u52A0\u5230\u5217\u8868",
@@ -482,7 +558,7 @@ var MESSAGES = {
       addDraftButton: "\u52A0\u5165\u5217\u8868",
       clearButton: "\u6E05\u7A7A",
       inputAria: "JSON \u51ED\u636E\u8F93\u5165",
-      inputPlaceholder: `\u7C98\u8D34 ChatGPT Session\u3001Codex auth.json\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
+      inputPlaceholder: `\u7C98\u8D34 OpenAI / Grok OAuth JSON\u3001JSONL\uFF0C\u6216\u62D6\u5165\u591A\u8D26\u53F7\u5BFC\u51FA\u6587\u4EF6\u3002
 
 \u793A\u4F8B\uFF1A
 {
@@ -508,12 +584,14 @@ var MESSAGES = {
       outputOptions: "\u8F93\u51FA\u9009\u9879",
       jsonlFormat: "JSONL \u683C\u5F0F",
       fakeId: "\u5408\u6210 id_token",
+      refreshToken: "\u5305\u542B refresh_token",
       accountTitle: "\u5DF2\u52A0\u8F7D\u8D26\u53F7",
       clearAccounts: "\u6E05\u7A7A\u5217\u8868",
-      accountColumns: ["\u8D26\u53F7\u6807\u8BC6 (Email / ID)", "\u5957\u9910\u72B6\u6001", "\u8FC7\u671F\u65F6\u95F4", "\u64CD\u4F5C"],
+      accountColumns: ["\u8D26\u53F7\u6807\u8BC6 (Email / ID)", "\u5E73\u53F0 / \u5957\u9910", "\u8FC7\u671F\u65F6\u95F4", "\u64CD\u4F5C"],
       accountListAria: "\u8D26\u53F7\u5217\u8868",
       previewAria: "\u8F93\u51FA\u9884\u89C8",
       previewTabsAria: "\u9884\u89C8\u683C\u5F0F\u9009\u62E9",
+      jwtHoverAria: "\u60AC\u505C\u6216\u805A\u7126\u4EE5\u9884\u89C8 JWT \u5185\u5BB9",
       copyPreview: "\u590D\u5236\u5F53\u524D\u9884\u89C8",
       copied: "\u2713 \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F",
       copyToast: "\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F",
@@ -553,6 +631,7 @@ var MESSAGES = {
       removeAccount: (label) => `\u5220\u9664 ${label}`,
       jsonlTooltip: "JSONL\uFF1A\u884C\u5F0F JSON \u683C\u5F0F\uFF0C\u6BCF\u884C\u4E00\u4E2A\u8D26\u53F7\uFF08\u9002\u5408\u5355\u884C\u51ED\u636E\u5BFC\u5165\u7B49\u573A\u666F\uFF09\u3002",
       fakeIdTooltip: "\u5408\u6210 id_token\uFF1A\u9488\u5BF9\u7F3A\u5C11 id_token \u7684\u8D26\u53F7\u81EA\u52A8\u5408\u6210\u6A21\u62DF\u51ED\u636E\uFF0C\u4EE5\u517C\u5BB9 Codex Auth \u7B49\u4E0B\u6E38\u5DE5\u5177\u3002",
+      refreshTokenTooltip: "\u53D6\u6D88\u540E\uFF0C\u6240\u6709\u8F93\u51FA\u90FD\u4F1A\u7701\u7565 refresh_token\uFF1B\u51ED\u8BC1\u8FC7\u671F\u540E\u5C06\u65E0\u6CD5\u81EA\u52A8\u7EED\u671F\u3002",
       codexManagerTooltip: "Codex-Manager \u683C\u5F0F\u3002",
       codexTooltip: "Codex auth.json \u683C\u5F0F\uFF0C\u53EF\u5BFC\u5165 Codex CLI\u3001Cockpit \u548C AxonHub \u7B49\u517C\u5BB9\u8BE5\u683C\u5F0F\u7684\u9879\u76EE\u3002",
       modeSingle: "\u5355\u4E2A",
@@ -586,13 +665,14 @@ Options:
   <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
   -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
   --stdin                Read from standard input; conflicts with paths
-  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/all
-  --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
+  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/grok/all
+  --mode <fmt>=<m>       sub2api/codex2api/grok output mode: merged or single
   -o, --out-dir <path>   Output directory, default output
   --jsonl                Output JSONL text, one JSON document per line
   --zip                  Write one ZIP file and keep the current output tree inside it
   --stdout               Write a single output file to stdout
   --no-fake-id           Omit synthetic id_token from output (included by default)
+  --no-refresh-token     Omit refresh_token from output (included by default)
   --lang <zh|en>         Human-readable output language, default en when undetected
   --inspect              Print account summary only
   --dry-run              Print write plan without writing files
@@ -605,12 +685,13 @@ Options:
       inputPathSource: "input path",
       errors: {
         noAccounts: "No convertible accounts found",
+        noApplicableFormats: "The selected formats do not apply to the recognized accounts; no files were generated",
         cwdMissing: "Current directory no longer exists",
         unknownArg: (arg) => `Unknown argument: ${arg}`,
         missingInput: "No input specified; pass <path>, -i, or --stdin",
         invalidModeSyntax: (value) => `Invalid --mode: ${value} (expected format=merged|single)`,
         unknownOutputFormat: (format) => `Unknown output format: ${format}`,
-        unsupportedModeFormat: (format) => `--mode only supports sub2api or codex2api: ${format}`,
+        unsupportedModeFormat: (format) => `--mode only supports sub2api, codex2api, or grok: ${format}`,
         unknownOutputMode: (mode) => `Unknown output mode in --mode: ${mode}`,
         stdinConflict: (source) => `${source} conflicts with --stdin; choose one input source`,
         stdinPathConflict: "--stdin conflicts with input paths; choose one input source",
@@ -652,16 +733,12 @@ Press Ctrl+C to stop.
       invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: input is not ${inputFormat}`,
       noTokens: (sourceName) => `${sourceName}: no recognizable token fields found`,
       invalidExpiry: (sourceName, value) => `${sourceName}: invalid expiry time ("${value}")`,
-      syntheticIdToken: (sourceName) => `${sourceName}: generated synthetic id_token`,
-      missingIdToken: (sourceName) => `${sourceName}: missing id_token`,
-      missingRefreshToken: (sourceName) => `${sourceName}: missing refresh_token`,
-      missingAccessToken: (sourceName) => `${sourceName}: missing access_token`,
       claimOverride: (sourceName, fields) => `${sourceName}: access_token claim mismatch, overwritten fields: ${fields.join(",")}`,
       claimSanity: (sourceName, fields) => `${sourceName}: invalid JWT claims: ${fields.join(",")}`
     },
     web: {
-      pageTitle: "GPT Auth Converter | Local credential format converter",
-      appTitle: "GPT Auth Converter",
+      pageTitle: "Auth Converter | Local OpenAI / Grok OAuth credential converter",
+      appTitle: "Auth Converter",
       notice: "Local-only conversion. Everything runs in this browser.",
       dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
       dragSub: "Release to add to the list",
@@ -677,7 +754,7 @@ Press Ctrl+C to stop.
       addDraftButton: "Add to List",
       clearButton: "Clear",
       inputAria: "JSON credential input",
-      inputPlaceholder: `Paste a ChatGPT /api/auth/session JSON response, Codex auth.json, JSONL text, or drop multi-account JSON exports below...
+      inputPlaceholder: `Paste OpenAI / Grok OAuth JSON, JSONL text, or drop multi-account exports below...
 
 Example:
 {
@@ -706,12 +783,14 @@ Example:
       outputOptions: "Options",
       jsonlFormat: "JSONL Format",
       fakeId: "Synthetic id_token",
+      refreshToken: "Include refresh_token",
       accountTitle: "Loaded Accounts",
       clearAccounts: "Clear List",
-      accountColumns: ["Account (Email / ID)", "Plan", "Expires At", "Action"],
+      accountColumns: ["Account (Email / ID)", "Platform / Plan", "Expires At", "Action"],
       accountListAria: "Account list",
       previewAria: "Output preview",
       previewTabsAria: "Preview format selection",
+      jwtHoverAria: "Hover or focus to preview JWT contents",
       copyPreview: "Copy Preview",
       copied: "\u2713 Copied",
       copyToast: "Copied to clipboard",
@@ -751,6 +830,7 @@ Example:
       removeAccount: (label) => `Remove ${label}`,
       jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
       fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
+      refreshTokenTooltip: "When disabled, every output omits refresh_token and credentials cannot refresh automatically after expiry.",
       codexManagerTooltip: "Codex-Manager format.",
       codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
       modeSingle: "Single",
@@ -930,21 +1010,27 @@ function missingStart(locale) {
 
 // src/jwt.ts
 var SYNTHETIC_ID_TOKEN_PLACEHOLDER_SIGNATURE = base64urlEncode("lanv_authconv");
-function decodeJwtPayload(token) {
+function decodeJwtParts(token) {
   if (!token) {
     return void 0;
   }
   const parts = token.split(".");
-  if (parts.length < 2 || !parts[1]) {
+  if (parts.length !== 3 || !parts[0] || !parts[1]) {
     return void 0;
   }
   try {
-    const text = base64urlDecode(parts[1]);
-    const parsed = JSON.parse(text);
-    return isRecord(parsed) ? parsed : void 0;
+    const header = JSON.parse(base64urlDecode(parts[0]));
+    const payload = JSON.parse(base64urlDecode(parts[1]));
+    if (!isRecord(header) || !isRecord(payload)) {
+      return void 0;
+    }
+    return { header, payload };
   } catch {
     return void 0;
   }
+}
+function decodeJwtPayload(token) {
+  return decodeJwtParts(token)?.payload;
 }
 function createSyntheticIdToken(claims) {
   const header = {
@@ -1037,6 +1123,7 @@ function base64urlEncode(value) {
 }
 
 // src/normalize.ts
+var OPENAI_ISSUER = "https://auth.openai.com";
 function detectInputFormat(input) {
   if (Array.isArray(input)) {
     const formats = uniqueFormats(input.filter(isRecord).map(detectArrayItemFormat));
@@ -1075,8 +1162,14 @@ function detectRecordInputFormat(input) {
   if (isRecord(input.credentials)) {
     return "sub2api";
   }
-  if (input.type === "codex" && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
+  if (isGrokAuthRecord(input)) {
+    return "grok";
+  }
+  if ((input.type === "codex" || input.type === "xai") && (typeof input.access_token === "string" || typeof input.refresh_token === "string" || typeof input.session_token === "string")) {
     return "cpa";
+  }
+  if (hasXaiJwt(input)) {
+    return "grok";
   }
   if (isCodexAuthRecord(input)) {
     return "codex";
@@ -1096,18 +1189,27 @@ function normalizeInput(input, source, options = {}) {
   const locale = options.locale ?? DEFAULT_LOCALE;
   const messages = messagesFor(locale).normalize;
   const warnings = [];
+  const rejections = [];
   const selectedFormat = selectedInputFormat(options.inputFormat);
   const detectedFormat = detectInputFormat(input);
   const inputFormat = selectedFormat ?? detectedFormat;
   const candidates = extractCandidates(input, source, selectedFormat);
-  const accounts = candidates.map((candidate, index) => {
+  const acceptedCandidates = candidates.filter((candidate) => {
+    const rejection = candidateRejectionWarning(candidate, options.locale ?? DEFAULT_LOCALE);
+    if (rejection) {
+      rejections.push(rejection);
+      return false;
+    }
+    return true;
+  });
+  const accounts = acceptedCandidates.map((candidate, index) => {
     const account = normalizeCandidate(candidate, index, options);
     if (account) {
       account.inputFormat = candidate.inputFormat;
     }
     return account;
   }).filter((account) => account !== void 0);
-  if (accounts.length === 0) {
+  if (accounts.length === 0 && rejections.length === 0) {
     warnings.push(
       selectedFormat ? messages.invalidInputFormat(source.sourceName, inputFormatLabel(selectedFormat, locale)) : messages.noTokens(source.sourceName)
     );
@@ -1115,8 +1217,20 @@ function normalizeInput(input, source, options = {}) {
   return {
     accounts,
     warnings: warnings.concat(accounts.flatMap((account) => account.warnings)),
+    rejections,
     inputFormat: selectedFormat ?? commonAccountInputFormat(accounts) ?? inputFormat
   };
+}
+function candidateRejectionWarning(candidate, locale) {
+  const records = candidate.records;
+  const accessClaims = decodeJwtPayload(firstString(records, ["access_token", "accessToken", "key"]));
+  const idClaims = decodeJwtPayload(firstString(records, ["id_token", "idToken"]));
+  const structureProvider = providerFromStructure(candidate, records);
+  const jwtProvider = providerFromIssuer(claimString(accessClaims, "iss") ?? claimString(idClaims, "iss"));
+  if (structureProvider && jwtProvider && structureProvider !== jwtProvider) {
+    return `${candidate.sourceName}: ${locale === "en" ? "provider conflict" : "\u5E73\u53F0\u51B2\u7A81"}`;
+  }
+  return void 0;
 }
 function selectedInputFormat(inputFormat) {
   return inputFormat && inputFormat !== "unknown" ? inputFormat : void 0;
@@ -1153,6 +1267,9 @@ function extractAutoCandidatesFromRecord(record, source, index) {
   if (inputFormat === "sub2api" && Array.isArray(record.accounts)) {
     return record.accounts.filter(isRecord).map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "sub2api"));
   }
+  if (inputFormat === "grok") {
+    return grokRecords(record).map((item, accountIndex) => candidateFromRecord(item, source, accountIndex, "grok"));
+  }
   return [candidateFromRecord(record, source, index, inputFormat)];
 }
 function extractCandidatesForFormat(input, source, inputFormat) {
@@ -1167,6 +1284,8 @@ function candidateRecordsForFormat(input, inputFormat) {
       return sub2ApiRecords(input);
     case "cpa":
       return recordList(input).filter(isCpaRecord);
+    case "grok":
+      return grokRecords(input);
     case "codexmanager":
       return recordList(input).filter(isCodexManagerRecord);
     case "codex2api":
@@ -1202,7 +1321,28 @@ function isSub2ApiAccountRecord(record) {
   return isRecord(record.credentials) || typeof record.platform === "string";
 }
 function isCpaRecord(record) {
-  return record.type === "codex" && Boolean(firstString([record], ["access_token", "refresh_token", "session_token", "id_token"]));
+  return (record.type === "codex" || record.type === "xai") && Boolean(firstString([record], ["access_token", "refresh_token", "session_token", "id_token"]));
+}
+function isGrokAuthRecord(record) {
+  const entries = Object.entries(record);
+  return entries.length > 0 && entries.every(([key, value]) => key.startsWith(`${XAI_ISSUER}::`) && isRecord(value) && (typeof value.key === "string" || typeof value.refresh_token === "string"));
+}
+function grokRecords(input) {
+  if (!isRecord(input)) {
+    return [];
+  }
+  if (!isGrokAuthRecord(input)) {
+    return hasXaiJwt(input) || input.type === "xai" ? [input] : [];
+  }
+  return Object.entries(input).map(([authKey, value]) => ({
+    ...value,
+    auth_key: authKey
+  }));
+}
+function hasXaiJwt(record) {
+  const accessClaims = decodeJwtPayload(firstString([record], ["access_token", "accessToken", "key"]));
+  const idClaims = decodeJwtPayload(firstString([record], ["id_token", "idToken"]));
+  return claimString(accessClaims, "iss") === XAI_ISSUER || claimString(idClaims, "iss") === XAI_ISSUER;
 }
 function isCodexManagerRecord(record) {
   return isRecord(record.tokens) && isRecord(record.meta);
@@ -1269,7 +1409,7 @@ function userAliases(user) {
 function normalizeCandidate(candidate, index, options) {
   const messages = messagesFor(options.locale ?? DEFAULT_LOCALE).normalize;
   const { records } = candidate;
-  const accessToken = firstString(records, ["access_token", "accessToken"]);
+  const accessToken = firstString(records, ["access_token", "accessToken", "key"]);
   const refreshToken = firstString(records, ["refresh_token", "refreshToken"]);
   const sessionToken = firstString(records, ["session_token", "sessionToken"]);
   let idToken = firstString(records, ["id_token", "idToken"]);
@@ -1284,6 +1424,11 @@ function normalizeCandidate(candidate, index, options) {
   const authClaimRecords = accessFirstClaimRecords.map(openAIAuthClaims).filter((claims2) => claims2 !== void 0);
   const claims = accessClaims ?? idClaims;
   const warnings = [];
+  const structureProvider = providerFromStructure(candidate, records);
+  const jwtProvider = providerFromIssuer(
+    claimString(accessClaims, "iss") ?? claimString(idClaims, "iss")
+  );
+  const provider = structureProvider ?? jwtProvider ?? "unknown";
   const accessAuthClaims = openAIAuthClaims(accessClaims);
   const idAuthClaims = openAIAuthClaims(idClaims);
   const claimedChatgptAccountUserId = claimString(accessAuthClaims, "chatgpt_account_user_id") ?? claimString(accessClaims, "chatgpt_account_user_id") ?? claimString(idAuthClaims, "chatgpt_account_user_id") ?? claimString(idClaims, "chatgpt_account_user_id");
@@ -1306,8 +1451,8 @@ function normalizeCandidate(candidate, index, options) {
   const recordIssuer = firstString(records, ["issuer", "iss"]);
   const issuer = preferClaimIdentity ? claimedIssuer ?? recordIssuer : recordIssuer ?? claimedIssuer;
   const audience = firstClaimStringArray(accessFirstClaimRecords, "aud");
-  const clientId = firstClaimString(accessFirstClaimRecords, ["client_id"]);
-  const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp");
+  const clientId = firstString(records, ["client_id", "clientId", "oidc_client_id"]) ?? firstClaimString(accessFirstClaimRecords, ["client_id"]);
+  const scopes = firstClaimStringArray(accessFirstClaimRecords, "scp") ?? firstClaimStringArray(accessFirstClaimRecords, "scope");
   const claimedNotBeforeNumber = firstClaimNumber(accessFirstClaimRecords, "nbf");
   const notBefore = normalizeTimeValue(claimedNotBeforeNumber);
   const recordEmail = firstString(records, ["email", "email_address", "emailAddress"]);
@@ -1369,6 +1514,7 @@ function normalizeCandidate(candidate, index, options) {
     }
   }
   const sanityFields = claimSanityFields({
+    provider,
     issuer: claimedIssuer,
     audience,
     notBefore: claimedNotBeforeNumber,
@@ -1384,7 +1530,7 @@ function normalizeCandidate(candidate, index, options) {
   if (idToken && idTokenSynthetic) {
     idToken = applySyntheticIdTokenSignature(idToken);
   }
-  if (!idToken) {
+  if (!idToken && provider === "openai") {
     const syntheticClaims = buildSyntheticClaims({
       claims,
       email,
@@ -1400,18 +1546,10 @@ function normalizeCandidate(candidate, index, options) {
     if (syntheticClaims) {
       idToken = createSyntheticIdToken(syntheticClaims);
       idTokenSynthetic = true;
-      warnings.push(messages.syntheticIdToken(candidate.sourceName));
-    } else {
-      warnings.push(messages.missingIdToken(candidate.sourceName));
     }
   }
-  if (!refreshToken) {
-    warnings.push(messages.missingRefreshToken(candidate.sourceName));
-  }
-  if (!accessToken) {
-    warnings.push(messages.missingAccessToken(candidate.sourceName));
-  }
   return {
+    provider,
     accessToken,
     refreshToken,
     idToken,
@@ -1433,6 +1571,17 @@ function normalizeCandidate(candidate, index, options) {
     planType,
     lastRefresh,
     expiresAt,
+    issuedAt: claimedLastRefresh,
+    tokenType: firstString(records, ["token_type", "tokenType"]),
+    expiresIn: firstNumber(records, ["expires_in", "expiresIn"]),
+    principalId: firstString(records, ["principal_id", "principalId"]),
+    principalType: firstString(records, ["principal_type", "principalType"]),
+    createTime: firstString(records, ["create_time", "createTime"]),
+    baseUrl: firstString(records, ["base_url", "baseUrl"]),
+    tokenEndpoint: firstString(records, ["token_endpoint", "tokenEndpoint"]),
+    redirectUri: firstString(records, ["redirect_uri", "redirectUri"]),
+    headers: firstStringRecord(records, "headers"),
+    disabled: firstBoolean(records, ["disabled"]),
     sourceName: candidate.sourceName,
     sourcePath: candidate.sourcePath || `${candidate.sourceName}#${index + 1}`,
     warnings
@@ -1457,23 +1606,13 @@ function dedupeAccountsWithAffectedIndex(accounts, affectedStartIndex = 0) {
   const result = [];
   let firstAffectedAccount;
   for (const [inputIndex, account] of accounts.entries()) {
-    const existingAccounts = result.filter((existing2) => hasCompatibleCredentials(existing2, account));
-    const existing = existingAccounts[0];
-    if (existing) {
+    const credentialMatches = result.filter((existing) => hasCompatibleCredentials(existing, account));
+    if (credentialMatches.length === 1) {
+      const existing = credentialMatches[0];
+      mergeMissingAccountFields(existing, account);
       if (inputIndex >= affectedStartIndex && !firstAffectedAccount) {
         firstAffectedAccount = existing;
       }
-      for (const duplicate of existingAccounts.slice(1)) {
-        mergeMissingAccountFields(existing, duplicate);
-        if (duplicate === firstAffectedAccount) {
-          firstAffectedAccount = existing;
-        }
-        const index = result.indexOf(duplicate);
-        if (index >= 0) {
-          result.splice(index, 1);
-        }
-      }
-      mergeMissingAccountFields(existing, account);
       continue;
     }
     result.push(account);
@@ -1488,6 +1627,9 @@ function dedupeAccountsWithAffectedIndex(accounts, affectedStartIndex = 0) {
   };
 }
 function hasCompatibleCredentials(left, right) {
+  if (left.provider !== right.provider) {
+    return false;
+  }
   let hasSharedCredential = false;
   for (const key of DEDUPE_CREDENTIAL_KEYS) {
     const leftValue = dedupeCredentialValue(left, key);
@@ -1571,6 +1713,64 @@ function firstBoolean(records, keys) {
   }
   return void 0;
 }
+function firstNumber(records, keys) {
+  for (const record of records) {
+    for (const key of keys) {
+      const value = record[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+        return Number(value);
+      }
+    }
+  }
+  return void 0;
+}
+function firstStringRecord(records, key) {
+  for (const record of records) {
+    const value = record[key];
+    if (!isRecord(value)) {
+      continue;
+    }
+    const entries = Object.entries(value).filter((entry) => typeof entry[1] === "string");
+    return Object.fromEntries(entries);
+  }
+  return void 0;
+}
+function providerFromIssuer(issuer) {
+  if (issuer === XAI_ISSUER) {
+    return "xai";
+  }
+  if (issuer === OPENAI_ISSUER) {
+    return "openai";
+  }
+  return void 0;
+}
+function providerFromStructure(candidate, records) {
+  if (candidate.inputFormat === "grok") {
+    return "xai";
+  }
+  const platform = firstString(records, ["platform"]);
+  const type = firstString(records, ["type"]);
+  const issuer = firstString(records, ["oidc_issuer", "issuer"]);
+  const tokenEndpoint = firstString(records, ["token_endpoint", "tokenEndpoint"]);
+  const openAiAccountId = firstString(records, [
+    "account_id",
+    "accountId",
+    "chatgpt_account_id",
+    "chatgptAccountId",
+    "chatgpt_user_id",
+    "chatgptUserId"
+  ]);
+  if (type === "xai" || platform === "grok" || issuer === XAI_ISSUER || tokenEndpoint === `${XAI_ISSUER}/oauth2/token`) {
+    return "xai";
+  }
+  if (type === "codex" || platform === "openai" || Boolean(openAiAccountId) || candidate.inputFormat === "session" || candidate.inputFormat === "codex" || candidate.inputFormat === "codexmanager" || candidate.inputFormat === "codex2api") {
+    return "openai";
+  }
+  return void 0;
+}
 function firstClaimString(records, keys) {
   for (const record of records) {
     const value = firstString([record], keys);
@@ -1620,10 +1820,11 @@ function splitChatGptAccountUserId(value) {
 }
 function claimSanityFields(input) {
   const fields = [];
-  if (input.issuer && input.issuer !== "https://auth.openai.com") {
+  const expectedIssuer = input.provider === "xai" ? XAI_ISSUER : input.provider === "openai" ? OPENAI_ISSUER : void 0;
+  if (expectedIssuer && input.issuer && input.issuer !== expectedIssuer) {
     fields.push("iss");
   }
-  if (input.audience && !input.audience.includes("https://api.openai.com/v1")) {
+  if (input.provider === "openai" && input.audience && !input.audience.includes("https://api.openai.com/v1")) {
     fields.push("aud");
   }
   if (input.notBefore !== void 0 && input.expiresAt !== void 0 && input.notBefore > input.expiresAt) {
@@ -2720,9 +2921,8 @@ function safeFileSegment2(value) {
 }
 
 // src/version.ts
-var PACKAGE_VERSION = "0.1.1";
-var injectedVersion = true ? "0.1.1.dev".trim() : "";
-var VERSION = injectedVersion || PACKAGE_VERSION;
+var injectedVersion = true ? "0.2.0.dev".trim() : "";
+var VERSION = injectedVersion || "dev";
 
 // src/cli.ts
 var CliError = class extends Error {
@@ -2767,37 +2967,47 @@ async function runCli(args, io = {}) {
       locale: parsed.locale
     });
     if (normalized.accounts.length === 0) {
-      return fail(1, [messages.errors.noAccounts, ...normalized.warnings]);
+      return fail(1, [messages.errors.noAccounts, ...normalized.rejections, ...normalized.warnings]);
     }
-    const visibleWarnings = outputWarnings(normalized, parsed.locale, parsed.allowSyntheticIdToken);
-    const formats = resolveFormats(parsed.formatValues, resolveInputFormat(loadedInputs), parsed.locale);
+    const successExitCode = normalized.rejections.length > 0 ? 1 : 0;
+    const visibleWarnings = normalized.warnings;
+    const formats = resolveFormats(parsed.formatValues, parsed.locale);
+    const exportAccounts = filterAccountsForFormats(normalized.accounts, formats);
     const files = buildOutputPlan(normalized.accounts, formats, {
       outputModes: effectiveOutputModes(parsed.outputModes, parsed.textMode),
-      allowSyntheticIdToken: parsed.allowSyntheticIdToken
+      allowSyntheticIdToken: parsed.allowSyntheticIdToken,
+      includeRefreshToken: parsed.includeRefreshToken
     });
     const serializedFiles = serializeOutputFiles(files, parsed.textMode);
+    const outputFormats = formats.filter((format) => serializedFiles.some((file) => file.format === format));
     if (parsed.inspect) {
-      return info(inspectSummary(normalized, parsed.locale, parsed.allowSyntheticIdToken));
+      return info(appendRejections(inspectSummary(normalized, parsed.locale), normalized.rejections), successExitCode);
+    }
+    if (serializedFiles.length === 0) {
+      return fail(1, [messages.errors.noApplicableFormats]);
     }
     const outputRoot = path.resolve(cwd, parsed.outDir);
-    const zipName = parsed.zip ? zipDownloadName(normalized.accounts) : void 0;
+    const zipName = parsed.zip ? zipDownloadName(exportAccounts) : void 0;
     if (parsed.dryRun) {
-      return info(dryRunSummary(
-        normalized.accounts.length,
-        zipName ? [{ path: zipName, accountCount: normalized.accounts.length }] : serializedFiles,
+      return info(appendRejections(dryRunSummary(
+        exportAccounts.length,
+        zipName ? [{ path: zipName, accountCount: exportAccounts.length }] : serializedFiles,
         visibleWarnings,
         outputRoot,
         parsed.locale
-      ));
+      ), normalized.rejections), successExitCode);
     }
     if (parsed.stdout) {
-      if (formats.length !== 1 || serializedFiles.length !== 1) {
+      if (outputFormats.length !== 1 || serializedFiles.length !== 1) {
         return fail(2, [messages.errors.stdoutSingleFile]);
       }
       return {
-        exitCode: 0,
+        exitCode: successExitCode,
         stdout: serializedFiles[0].text,
-        stderr: humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, void 0, parsed.locale)
+        stderr: appendRejections(
+          humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, void 0, parsed.locale),
+          normalized.rejections
+        )
       };
     }
     if (zipName) {
@@ -2808,9 +3018,12 @@ async function runCli(args, io = {}) {
       await mkdir(outputRoot, { recursive: true, mode: 448 });
       await writeFile(targetPath, zipOutputFiles(serializedFiles), { mode: 384 });
       return {
-        exitCode: 0,
+        exitCode: successExitCode,
         stdout: "",
-        stderr: fileSummary(normalized.accounts.length, formats, targetPath, visibleWarnings, parsed.locale)
+        stderr: appendRejections(
+          fileSummary(exportAccounts.length, outputFormats, targetPath, visibleWarnings, parsed.locale),
+          normalized.rejections
+        )
       };
     }
     if (!parsed.force) {
@@ -2823,9 +3036,12 @@ async function runCli(args, io = {}) {
     }
     const singleTargetPath = serializedFiles.length === 1 ? path.join(outputRoot, serializedFiles[0].path) : void 0;
     return {
-      exitCode: 0,
+      exitCode: successExitCode,
       stdout: "",
-      stderr: singleTargetPath ? fileSummary(normalized.accounts.length, formats, singleTargetPath, visibleWarnings, parsed.locale) : humanSummary(normalized.accounts.length, serializedFiles.length, formats, visibleWarnings, outputRoot, parsed.locale)
+      stderr: appendRejections(
+        singleTargetPath ? fileSummary(exportAccounts.length, outputFormats, singleTargetPath, visibleWarnings, parsed.locale) : humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, outputRoot, parsed.locale),
+        normalized.rejections
+      )
     };
   } catch (error) {
     if (error instanceof CliError) {
@@ -2861,6 +3077,7 @@ function parseArgs(args, locale) {
     stdout: false,
     zip: false,
     allowSyntheticIdToken: true,
+    includeRefreshToken: true,
     locale,
     inspect: false,
     dryRun: false,
@@ -2903,6 +3120,9 @@ function parseArgs(args, locale) {
         break;
       case "--no-fake-id":
         parsed.allowSyntheticIdToken = false;
+        break;
+      case "--no-refresh-token":
+        parsed.includeRefreshToken = false;
         break;
       case "--stdin":
         setStdinInput(parsed);
@@ -2964,7 +3184,7 @@ function parseArgs(args, locale) {
 function validateParsedArgs(parsed) {
   const messages = messagesFor(parsed.locale).cli;
   if (parsed.serve) {
-    const hasConversionOption = parsed.inputPaths.length > 0 || parsed.stdin || parsed.formatValues.length > 0 || parsed.outDirSpecified || parsed.stdout || parsed.zip || parsed.inspect || parsed.dryRun || parsed.force || parsed.textMode !== "json" || !parsed.allowSyntheticIdToken || Object.keys(parsed.outputModes).length > 0;
+    const hasConversionOption = parsed.inputPaths.length > 0 || parsed.stdin || parsed.formatValues.length > 0 || parsed.outDirSpecified || parsed.stdout || parsed.zip || parsed.inspect || parsed.dryRun || parsed.force || parsed.textMode !== "json" || !parsed.allowSyntheticIdToken || !parsed.includeRefreshToken || Object.keys(parsed.outputModes).length > 0;
     if (hasConversionOption) {
       throw new CliError(2, messages.errors.serveConflict);
     }
@@ -3219,13 +3439,14 @@ function normalizeLoadedInputs(inputs, options) {
   return {
     accounts: dedupedAccounts,
     warnings: results.flatMap((result) => result.warnings),
+    rejections: results.flatMap((result) => result.rejections),
     inputFormat: resolveInputFormat(inputs)
   };
 }
 function resolveInputFormat(inputs) {
   return inputs.length > 0 && inputs.every((input) => input.inputFormat === "sub2api") ? "sub2api" : "unknown";
 }
-function resolveFormats(values, inputFormat, locale) {
+function resolveFormats(values, locale) {
   if (values.length > 0) {
     return parseFormatList(values, {
       invalidFormatMessage: messagesFor(locale).cli.errors.unknownOutputFormat
@@ -3256,16 +3477,6 @@ function groupWarnings(warnings, locale) {
     return messages.groupedWarnings(msg, sources);
   });
 }
-function outputWarnings(result, locale, allowSyntheticIdToken) {
-  if (allowSyntheticIdToken) {
-    return result.warnings;
-  }
-  const normalizeMessages = messagesFor(locale).normalize;
-  const syntheticWarnings = new Set(
-    result.accounts.filter((account) => account.idTokenSynthetic).map((account) => normalizeMessages.syntheticIdToken(account.sourceName))
-  );
-  return result.warnings.filter((warning) => !syntheticWarnings.has(warning));
-}
 function humanSummary(accountCount, fileCount, formats, warnings, outputRoot, locale) {
   const messages = messagesFor(locale).cli.summary;
   const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
@@ -3288,7 +3499,16 @@ function appendWarnings(lines, warnings, locale) {
     lines.push(`${messages.warning}: ${warning}`);
   }
 }
-function inspectSummary(result, locale, allowSyntheticIdToken) {
+function appendRejections(summary, rejections) {
+  if (rejections.length === 0) {
+    return summary;
+  }
+  const prefix = summary.endsWith("\n") ? summary : `${summary}
+`;
+  return `${prefix}${rejections.join("\n")}
+`;
+}
+function inspectSummary(result, locale) {
   const messages = messagesFor(locale).cli.summary;
   const header = messages.inspectColumns;
   const rows = result.accounts.map((account, index) => [
@@ -3303,7 +3523,7 @@ function inspectSummary(result, locale, allowSyntheticIdToken) {
   );
   const formatRow = (cells) => cells.map((cell, col) => cell.padEnd(widths[col], " ")).join("  ").trimEnd();
   const lines = [formatRow(header), ...rows.map(formatRow)];
-  for (const warning of groupWarnings(outputWarnings(result, locale, allowSyntheticIdToken), locale)) {
+  for (const warning of groupWarnings(result.warnings, locale)) {
     lines.push(`${messages.warning}: ${warning}`);
   }
   return `${lines.join("\n")}
@@ -3351,7 +3571,7 @@ function isOutputMode(value) {
   return value === "merged" || value === "single";
 }
 function isMergeableFormat(format) {
-  return format === "sub2api" || format === "codex2api";
+  return format === "sub2api" || format === "codex2api" || format === "grok";
 }
 function isNodeIoError(error) {
   return error instanceof Error && "code" in error;
@@ -3371,9 +3591,9 @@ function fail(exitCode, messages) {
 `
   };
 }
-function info(stderr) {
+function info(stderr, exitCode = 0) {
   return {
-    exitCode: 0,
+    exitCode,
     stdout: "",
     stderr
   };
