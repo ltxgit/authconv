@@ -1,4 +1,5 @@
 import { compactObject } from "./object.js";
+import { OPENAI_ISSUER } from "./openai.js";
 import type {
   Codex2ApiRenderedAccount,
   CodexManagerRenderedAccount,
@@ -6,48 +7,22 @@ import type {
   CpaRenderedAccount,
   CpaXaiRenderedAccount,
   GrokRenderedAuth,
-  NormalizedAccount,
-  OutputFormat,
+  OpenAINormalizedAccount,
   RenderOptions,
-  RenderOutputByFormat,
   Sub2ApiRenderedAccount,
   Sub2ApiRenderedCredentials,
-  Sub2ApiRenderedData,
   Sub2ApiRenderedExtra,
+  XaiNormalizedAccount,
 } from "./types.js";
 import {
   GROK_CLI_CLIENT_ID,
   XAI_ISSUER,
 } from "./xai.js";
 
-export function renderFormat<T extends OutputFormat>(
-  accounts: NormalizedAccount[],
-  format: T,
+export function renderCpaAccount(
+  account: OpenAINormalizedAccount | XaiNormalizedAccount,
   options: RenderOptions = {},
-): RenderOutputByFormat[T] {
-  switch (format) {
-    case "cpa":
-      return (accounts.length === 1
-        ? renderCpaAccount(accounts[0], options)
-        : accounts.map((account) => renderCpaAccount(account, options))) as RenderOutputByFormat[T];
-    case "codex2api":
-      return accounts.map((account) => renderCodex2ApiAccount(account, options)) as RenderOutputByFormat[T];
-    case "sub2api":
-      return renderSub2Api(accounts, options) as RenderOutputByFormat[T];
-    case "codexmanager":
-      return (accounts.length === 1
-        ? renderCodexManagerAccount(accounts[0], options)
-        : accounts.map((account) => renderCodexManagerAccount(account, options))) as RenderOutputByFormat[T];
-    case "codex":
-      return (accounts.length === 1
-        ? renderCodexAuth(accounts[0], options)
-        : accounts.map((account) => renderCodexAuth(account, options))) as RenderOutputByFormat[T];
-    case "grok":
-      return renderGrokAuth(accounts, options) as RenderOutputByFormat[T];
-  }
-}
-
-function renderCpaAccount(account: NormalizedAccount, options: RenderOptions): CpaRenderedAccount | CpaXaiRenderedAccount {
+): CpaRenderedAccount | CpaXaiRenderedAccount {
   if (account.provider === "xai") {
     return renderCpaXaiAccount(account, options);
   }
@@ -73,7 +48,7 @@ function renderCpaAccount(account: NormalizedAccount, options: RenderOptions): C
   return rendered;
 }
 
-function renderCpaXaiAccount(account: NormalizedAccount, options: RenderOptions): CpaXaiRenderedAccount {
+function renderCpaXaiAccount(account: XaiNormalizedAccount, options: RenderOptions): CpaXaiRenderedAccount {
   const rendered = compactObject({
     type: "xai",
     access_token: account.accessToken,
@@ -94,7 +69,7 @@ function renderCpaXaiAccount(account: NormalizedAccount, options: RenderOptions)
   return rendered as CpaXaiRenderedAccount;
 }
 
-function renderCodex2ApiAccount(account: NormalizedAccount, options: RenderOptions): Codex2ApiRenderedAccount {
+export function renderCodex2ApiAccount(account: OpenAINormalizedAccount, options: RenderOptions = {}): Codex2ApiRenderedAccount {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   return compactObject({
     name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId,
@@ -110,24 +85,17 @@ function renderCodex2ApiAccount(account: NormalizedAccount, options: RenderOptio
   }) as Codex2ApiRenderedAccount;
 }
 
-function renderSub2Api(accounts: NormalizedAccount[], options: RenderOptions): Sub2ApiRenderedData {
-  return {
-    type: "sub2api-data",
-    version: 1,
-    exported_at: (options.now ?? new Date()).toISOString(),
-    proxies: [],
-    accounts: accounts.map((account) => renderSub2ApiAccount(account, options)),
-  };
-}
-
-function renderSub2ApiAccount(account: NormalizedAccount, options: RenderOptions): Sub2ApiRenderedAccount {
+export function renderSub2ApiAccount(
+  account: OpenAINormalizedAccount | XaiNormalizedAccount,
+  options: RenderOptions = {},
+): Sub2ApiRenderedAccount {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   const isOpenAI = account.provider === "openai";
   const credentials = compactObject({
     access_token: account.accessToken,
     refresh_token: shouldIncludeRefreshToken(options) ? account.refreshToken : undefined,
     session_token: isOpenAI ? account.sessionToken : undefined,
-    id_token: allowSynthetic ? account.idToken : (account.idTokenSynthetic ? undefined : account.idToken),
+    id_token: allowSynthetic ? account.idToken : (isOpenAI && account.idTokenSynthetic ? undefined : account.idToken),
     expires_at: account.expiresAt,
     email: account.email,
     chatgpt_account_id: isOpenAI ? account.chatgptAccountId : undefined,
@@ -139,10 +107,10 @@ function renderSub2ApiAccount(account: NormalizedAccount, options: RenderOptions
   }) as Sub2ApiRenderedCredentials;
   const extra = compactObject({
     import_source: "authconv",
-    id_token_synthetic: account.idTokenSynthetic && allowSynthetic ? true : undefined,
+    id_token_synthetic: isOpenAI && account.idTokenSynthetic && allowSynthetic ? true : undefined,
   }) as Sub2ApiRenderedExtra;
   return compactObject({
-    name: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId ?? "authconv-account",
+    name: account.name ?? account.email ?? (isOpenAI ? account.chatgptAccountId ?? account.accountId : account.userId) ?? "authconv-account",
     platform: account.provider === "xai" ? "grok" : "openai",
     type: "oauth",
     credentials,
@@ -153,30 +121,72 @@ function renderSub2ApiAccount(account: NormalizedAccount, options: RenderOptions
   }) as Sub2ApiRenderedAccount;
 }
 
-function renderGrokAuth(accounts: NormalizedAccount[], options: RenderOptions): GrokRenderedAuth {
-  return Object.fromEntries(accounts.map((account) => {
-    const clientId = account.clientId ?? GROK_CLI_CLIENT_ID;
-    const userId = account.userId ?? account.principalId ?? "";
-    const key = accounts.length === 1
-      ? `${XAI_ISSUER}::${clientId}`
-      : `${XAI_ISSUER}::${clientId}::${userId}`;
-    return [key, compactObject({
-      key: account.accessToken ?? "",
-      auth_mode: "oidc",
-      create_time: account.createTime ?? account.issuedAt,
-      user_id: userId,
-      email: account.email ?? "",
-      principal_type: account.principalType ?? "User",
-      principal_id: account.principalId ?? userId,
-      refresh_token: shouldIncludeRefreshToken(options) ? (account.refreshToken ?? "") : undefined,
-      expires_at: account.expiresAt,
-      oidc_issuer: XAI_ISSUER,
-      oidc_client_id: clientId,
-    })];
-  })) as GrokRenderedAuth;
+export function renderGrokEntry(
+  account: XaiNormalizedAccount,
+  options: RenderOptions = {},
+): [string, GrokRenderedAuth[string]] {
+  const clientId = account.clientId ?? GROK_CLI_CLIENT_ID;
+  return [`${XAI_ISSUER}::${clientId}`, renderXaiAuthEntry(account, clientId, options)];
 }
 
-function renderCodexManagerAccount(account: NormalizedAccount, options: RenderOptions): CodexManagerRenderedAccount {
+export function renderGrok2ApiEntry(
+  account: XaiNormalizedAccount,
+  options: RenderOptions = {},
+): [string, GrokRenderedAuth[string]] {
+  const clientId = account.clientId ?? GROK_CLI_CLIENT_ID;
+  const accountId = grok2ApiAccountId(account);
+  return [
+    `${XAI_ISSUER}::${accountId}`,
+    renderXaiAuthEntry(account, clientId, options, accountId),
+  ];
+}
+
+export function grok2ApiStorageKey(account: XaiNormalizedAccount): string {
+  return `${XAI_ISSUER}::${grok2ApiAccountId(account)}`;
+}
+
+function renderXaiAuthEntry(
+  account: XaiNormalizedAccount,
+  clientId: string,
+  options: RenderOptions,
+  anonymousAccountId?: string,
+): GrokRenderedAuth[string] {
+  const userId = account.userId ?? account.principalId ?? anonymousAccountId ?? "";
+  return compactObject({
+    key: account.accessToken ?? "",
+    auth_mode: "oidc",
+    create_time: account.createTime ?? account.issuedAt,
+    user_id: userId,
+    email: account.email ?? "",
+    principal_type: account.principalType ?? "User",
+    principal_id: account.principalId ?? userId,
+    refresh_token: shouldIncludeRefreshToken(options) ? (account.refreshToken ?? "") : undefined,
+    expires_at: account.expiresAt,
+    oidc_issuer: XAI_ISSUER,
+    oidc_client_id: clientId,
+  }) as GrokRenderedAuth[string];
+}
+
+function grok2ApiAccountId(account: XaiNormalizedAccount): string {
+  return account.userId ?? account.principalId ?? `authconv-${credentialFingerprint(account)}`;
+}
+
+function credentialFingerprint(account: XaiNormalizedAccount): string {
+  const source = [
+    ["access_token", account.accessToken],
+    ["refresh_token", account.refreshToken],
+    ["session_token", account.sessionToken],
+    ["id_token", account.idToken],
+  ].map(([field, value]) => `${field}\0${value ?? ""}`).join("\0");
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= BigInt(source.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+
+export function renderCodexManagerAccount(account: OpenAINormalizedAccount, options: RenderOptions = {}): CodexManagerRenderedAccount {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   return {
     tokens: compactObject({
@@ -188,7 +198,7 @@ function renderCodexManagerAccount(account: NormalizedAccount, options: RenderOp
     }),
     meta: compactObject({
       label: account.name ?? account.email ?? account.chatgptAccountId ?? account.accountId,
-      issuer: account.issuer ?? "https://auth.openai.com",
+      issuer: account.issuer ?? OPENAI_ISSUER,
       workspace_id: account.workspaceId,
       chatgpt_account_id: account.chatgptAccountId,
       tags: ["authconv"],
@@ -196,7 +206,7 @@ function renderCodexManagerAccount(account: NormalizedAccount, options: RenderOp
   };
 }
 
-function renderCodexAuth(account: NormalizedAccount, options: RenderOptions): CodexRenderedAuth {
+export function renderCodexAuth(account: OpenAINormalizedAccount, options: RenderOptions = {}): CodexRenderedAuth {
   const allowSynthetic = options.allowSyntheticIdToken !== false;
   return {
     auth_mode: "chatgpt",

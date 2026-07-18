@@ -16,7 +16,7 @@
         <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
         </svg>
-        <div class="drag-title" id="dragTitle">Drop to import JSON / JSONL / ZIP credentials</div>
+        <div class="drag-title" id="dragTitle">Drop to import credential files</div>
         <div class="drag-sub" id="dragSub">Release to add to the list</div>
       </div>
     </div>
@@ -24,6 +24,15 @@
     <div class="toast" id="toast" role="status" aria-live="polite" hidden>
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
       <span id="toastMessage"></span>
+    </div>
+
+    <div class="task-overlay" id="taskOverlay" hidden>
+      <div class="task-panel" role="status" aria-live="polite">
+        <div class="task-spinner" aria-hidden="true"></div>
+        <strong id="taskStage">Processing credentials</strong>
+        <span id="taskProgress"></span>
+        <button id="cancelTaskButton" type="button" class="btn btn-secondary btn-sm">Cancel</button>
+      </div>
     </div>
 
     <aside id="jwtPopover" class="jwt-popover" role="tooltip" hidden>
@@ -141,19 +150,19 @@
             </div>
           </div>
           <div id="inputError" class="input-error" role="alert" hidden></div>
-          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Choose or drop JSON, JSONL, or ZIP credential files or folders">
+          <div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Choose or drop credential files or folders; formats are detected by content">
             <svg class="cloud-icon" viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V15M17 8l-5-5-5 5M12 3v12"></path>
             </svg>
             <div class="drop-text">
               <strong id="dropTitle">导入凭据文件</strong>
-              <span id="dropSub">.json / .jsonl / .zip，支持文件夹拖入</span>
+              <span id="dropSub">支持任意扩展名和文件夹，按内容识别</span>
             </div>
             <div class="drop-actions">
               <button id="fileButton" type="button" class="btn btn-secondary btn-sm drop-file-button">Choose File</button>
               <button id="folderButton" type="button" class="btn btn-secondary btn-sm drop-folder-button">Choose Folder</button>
             </div>
-            <input id="fileInput" type="file" accept=".json,.jsonl,.zip,application/json,application/x-ndjson,application/zip,application/x-zip-compressed" multiple tabindex="-1" />
+            <input id="fileInput" type="file" multiple tabindex="-1" />
           </div>
         </div>
 
@@ -191,6 +200,11 @@
                     <input id="refreshTokenToggle" class="custom-checkbox" type="checkbox" checked />
                     <span id="refreshTokenToggleText">Include refresh_token</span>
                   </label>
+
+                  <label id="verifyTokenToggleContainer" class="option-toggle-container">
+                    <input id="verifyTokenToggle" class="custom-checkbox" type="checkbox" checked />
+                    <span id="verifyTokenToggleText">Verify token authenticity</span>
+                  </label>
                 </div>
               </div>
               <div class="toolbar-row export-row">
@@ -205,11 +219,15 @@
                 <div class="title-with-icon">
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                   <h3 id="account-title">Loaded Accounts</h3>
+                  <span id="accountCount" class="account-count"></span>
                 </div>
-                <button id="clearAccountsButton" type="button" class="btn btn-text btn-sm clear-accounts-button" hidden>
-                  <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                  <span id="clearAccountsButtonText">Clear List</span>
-                </button>
+                <div class="account-head-actions">
+                  <input id="accountSearch" class="account-search" type="search" placeholder="Search accounts" />
+                  <button id="clearAccountsButton" type="button" class="btn btn-text btn-sm clear-accounts-button" hidden>
+                    <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    <span id="clearAccountsButtonText">Clear List</span>
+                  </button>
+                </div>
               </div>
               <div class="grid-table-container">
                 <div class="account-columns" aria-hidden="true">

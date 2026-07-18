@@ -1,2094 +1,1002 @@
-import {
-  buildOutputPlan,
-  dedupeAccountsWithAffectedIndex,
-  detectWebLocale,
-  detectInputFormat,
-  filterAccountsForFormats,
-  FORMAT_LABELS,
-  inputFormatLabel,
-  messagesFor,
-  normalizeInput,
-  normalizeLocale,
-  parseInputPayloadWithMeta,
-  serializeOutputFiles,
-  type Locale,
-  type NormalizedAccount,
-  type OutputFormat,
-  type OutputMode,
-  type OutputModes,
-  type OutputTextMode,
-  type InputFormat,
-  type SerializedOutputFile,
-  zipOutputFiles,
-} from "../index.js";
-import {
-  extractZipJsonSources,
-  isCredentialImportPath,
-  isJsonCredentialPath,
-  isZipCredentialPath,
-  type JsonSource,
-} from "../import-sources.js";
-import { zipDownloadName } from "../download-names.js";
-import { effectiveWebOutputModes } from "./output-modes.js";
-import {
-  activeAccountSource,
-  displayCredentialExpiry,
-  effectiveFormats,
-  importSummary,
-  isExpiredCredential,
-  selectedIndexAfterRemoval,
-  syncPreviewTabSelection,
-  type AccountSourceKind,
-} from "./state-helpers.js";
-import { jwtPopoverText } from "./jwt-preview.js";
+import type { InputFormat, OutputFormat } from "../types.js";
+import { ALL_FORMATS } from "../formats.js";
+import { detectWebLocale, messagesFor, normalizeLocale } from "../i18n.js";
+import type { AccountStoreSummary } from "../account-store.js";
 import { outputOptionsUrl, parseOutputOptionsSearch } from "./url-state.js";
 import {
   readStoredPreferences,
   writeStoredPreferences,
-  type ThemeMode,
   type WebPreferences,
 } from "./preferences.js";
-
-const FORMATS: OutputFormat[] = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"];
-const INPUT_FORMAT_BADGE_LABELS: Record<InputFormat, string> = {
-  session: "Session",
-  sub2api: "sub2api",
-  cpa: "CPA",
-  grok: "Grok / xAI",
-  codexmanager: "Codex Manager",
-  codex2api: "Codex2Api",
-  codex: "Codex Auth",
-  unknown: "Unknown",
-};
-const SELECTABLE_INPUT_FORMATS: InputFormat[] = ["session", "sub2api", "cpa", "grok", "codexmanager", "codex2api", "codex"];
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
+import { AuthconvWorkerClient, type WorkerClientResponse, type WorkerRequestError } from "./worker-client.js";
+import type {
+  AccountScope,
+  WorkerFile,
+  WorkerOutputPlan,
+  WorkerProgress,
+  WorkerSummary,
+} from "./worker-protocol.js";
+import {
+  accountRowSelectable,
+  accountRowsSelectable,
+  effectiveFormats as selectEffectiveFormats,
+  highlightJson,
+  selectAccountForRange,
+  shouldRequireVisibleSelection,
+  shouldResetViewportForPreferredAccount,
+  WebView,
+  type WebViewState,
+} from "./view.js";
 
 const SESSION_URL = "https://chatgpt.com/api/auth/session";
-const CHEVRON_SVG = `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+const ROW_HEIGHT = 52;
+const ROW_OVERSCAN = 6;
+const RANGE_LIMIT = 20;
 
-type FileSystemFileHandleLike = {
-  kind: "file";
-  name: string;
-  getFile: () => Promise<File>;
-};
-
+type FileSystemFileHandleLike = { kind: "file"; name: string; getFile: () => Promise<File> };
 type FileSystemDirectoryHandleLike = {
   kind: "directory";
   name: string;
   values?: () => AsyncIterable<FileSystemHandleLike>;
   entries?: () => AsyncIterable<[string, FileSystemHandleLike]>;
 };
-
 type FileSystemHandleLike = FileSystemFileHandleLike | FileSystemDirectoryHandleLike;
-
-type WindowWithDirectoryPicker = Window & {
-  showDirectoryPicker?: () => Promise<FileSystemDirectoryHandleLike>;
-};
-
-type DataTransferItemWithFileSystemHandle = DataTransferItem & {
-  getAsFileSystemHandle?: () => Promise<FileSystemHandleLike | null>;
-};
-
+type WindowWithDirectoryPicker = Window & { showDirectoryPicker?: () => Promise<FileSystemDirectoryHandleLike> };
+type DataTransferItemWithHandle = DataTransferItem & { getAsFileSystemHandle?: () => Promise<FileSystemHandleLike | null> };
 type FileSystemEntryLike = {
   name: string;
   fullPath?: string;
   isFile: boolean;
   isDirectory: boolean;
 };
-
-type FileSystemFileEntryLike = FileSystemEntryLike & {
+type FileEntryLike = FileSystemEntryLike & {
   isFile: true;
-  file: (success: (file: File) => void, error?: (error: DOMException) => void) => void;
+  file: (success: (file: File) => void, failure?: (error: DOMException) => void) => void;
 };
-
-type FileSystemDirectoryEntryLike = FileSystemEntryLike & {
+type DirectoryEntryLike = FileSystemEntryLike & {
   isDirectory: true;
   createReader: () => {
-    readEntries: (success: (entries: FileSystemEntryLike[]) => void, error?: (error: DOMException) => void) => void;
+    readEntries: (success: (entries: FileSystemEntryLike[]) => void, failure?: (error: DOMException) => void) => void;
   };
 };
+type DataTransferItemWithEntry = DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntryLike | null };
 
-type DataTransferItemWithEntry = DataTransferItem & {
-  webkitGetAsEntry?: () => FileSystemEntryLike | null;
-};
-
-type ParsedSource = {
-  source: JsonSource;
-  accounts: NormalizedAccount[];
-  documentCount: number;
-  inputFormat?: InputFormat;
-  detectedInputFormat?: InputFormat;
-  error?: string;
-  errorKind?: "json" | "input";
-};
-
-type ViewState = {
-  draftSource?: JsonSource;
-  draftParsed?: ParsedSource;
-  sourceErrors: string[];
-  accounts: NormalizedAccount[];
-  selectedFormats: OutputFormat[];
-  outputModes: OutputModes;
-  outputTextMode: OutputTextMode;
-  previewFormat: OutputFormat;
-  selectedAccountIndex: number;
-  themeMode: ThemeMode;
-  serializedFiles: SerializedOutputFile[];
-  nextInputIndex: number;
-  forcedInputFormat: InputFormat | "auto";
-  allowSyntheticIdToken: boolean;
-  includeRefreshToken: boolean;
-  downloadBusy: boolean;
-  locale: Locale;
-};
-
-const state: ViewState = {
-  sourceErrors: [],
-  accounts: [],
-  selectedFormats: [...FORMATS],
-  outputModes: {
-    sub2api: "merged",
-    codex2api: "merged",
-    grok: "merged",
+const emptySummary: AccountStoreSummary = {
+  total: 0,
+  providerCounts: { openai: 0, xai: 0, unknown: 0 },
+  planCount: 0,
+  expiredCount: 0,
+  verificationCounts: { verified: 0, forged: 0, unverifiable: 0, unchecked: 0 },
+  providerVerificationCounts: {
+    openai: { verified: 0, forged: 0, unverifiable: 0, unchecked: 0 },
+    xai: { verified: 0, forged: 0, unverifiable: 0, unchecked: 0 },
+    unknown: { verified: 0, forged: 0, unverifiable: 0, unchecked: 0 },
   },
-  outputTextMode: "json",
+};
+
+const emptyOutputPlan: WorkerOutputPlan = {
+  accountCount: 0,
+  fileCount: 0,
+  formats: [],
+  rejectedAccountCount: 0,
+  outputType: "json",
+};
+
+/*
+ * UI state flow:
+ * WorkerSummary owns loaded/draft account state; scope changes reset the list viewport.
+ * WebView renders that snapshot; only per-account output modes may hold a row selection.
+ * Files are enumerated and imported inside one cancellable heavy-task boundary.
+ */
+const state: WebViewState = {
+  selectedFormats: [...ALL_FORMATS],
+  outputModes: {},
+  textMode: "json",
   previewFormat: "cpa",
-  selectedAccountIndex: 0,
-  themeMode: "system",
-  serializedFiles: [],
-  nextInputIndex: 1,
-  forcedInputFormat: "auto",
   allowSyntheticIdToken: true,
   includeRefreshToken: true,
-  downloadBusy: false,
+  verifyTokens: true,
+  outputPlan: emptyOutputPlan,
   locale: detectWebLocale(window.location.search),
+  themeMode: "system",
+  forcedInputFormat: "auto",
+  summary: {
+    scope: "loaded",
+    loaded: emptySummary,
+    active: emptySummary,
+    applicableFormats: [...ALL_FORMATS],
+    diagnostics: [],
+    inputFormat: "unknown",
+  },
+  selectedAccountId: undefined,
+  query: "",
+  previewText: "",
+  previewPath: "",
+  previewShown: 0,
+  previewTotal: 0,
+  previewBlocked: undefined,
+  draftReady: false,
+  busy: false,
+  transientError: undefined,
 };
 
+const client = new AuthconvWorkerClient();
 const systemDarkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const view = new WebView(state, {
+  setFormat(format, selected) {
+    state.selectedFormats = selected
+      ? ALL_FORMATS.filter((item) => state.selectedFormats.includes(item) || item === format)
+      : state.selectedFormats.filter((item) => item !== format);
+    invalidateOutputPlan();
+    syncPreviewFormat();
+    syncAccountSelection();
+    persistOutputState();
+    view.renderFormats();
+    void updateRange();
+    void updatePreview();
+  },
+  setPreviewFormat(format) {
+    state.previewFormat = format;
+    state.selectedAccountId = undefined;
+    requireVisibleSelection = shouldRequireVisibleSelection(state.query, accountRowsSelectable(state));
+    syncAccountSelection();
+    persistOutputState();
+    view.renderFormats();
+    void updateRange();
+    void updatePreview();
+  },
+  setOutputMode(format, mode) {
+    state.outputModes[format] = mode;
+    invalidateOutputPlan();
+    syncAccountSelection();
+    persistOutputState();
+    view.renderFormats();
+    void updateRange();
+    void updatePreview();
+  },
+}, ROW_HEIGHT);
+const els = view.elements;
+let inputTimer: number | undefined;
+let searchTimer: number | undefined;
+let loadingTimer: number | undefined;
 let toastTimer: number | undefined;
-let copyResetTimer: number | undefined;
-let jwtPopoverShowTimer: number | undefined;
+let previewRequest = 0;
+let rangeRequest = 0;
+let taskSequence = 0;
+let tokenVerificationRevision = 0;
+let draftRevision = 0;
+let dragDepth = 0;
+let heavyBusy = false;
+let pendingTextPreview = false;
+let jwtTimer: number | undefined;
 let jwtPopoverHideTimer: number | undefined;
+let jwtRequest = 0;
 let jwtPopoverTrigger: HTMLElement | undefined;
 let jwtPopoverPinned = false;
-let dragDepth = 0;
+let copySuccessTimer: number | undefined;
+let jwtCopySuccessTimer: number | undefined;
+let acceptedDraftText = "";
+let acceptedDraftInputFormat: InputFormat | "auto" = "auto";
+let requireVisibleSelection = false;
+let localTaskController: AbortController | undefined;
 
-const els = {
-  jsonInput: byId<HTMLTextAreaElement>("jsonInput"),
-  fileInput: byId<HTMLInputElement>("fileInput"),
-  dropZone: byId("dropZone"),
-  dragOverlay: byId("dragOverlay"),
-  toast: byId("toast"),
-  toastMessage: byId("toastMessage"),
-  logoIcon: byId("logoIcon"),
-  inputError: byId("inputError"),
-  inputFormatContainer: byId("inputFormatContainer"),
-  inputFormatSelect: byId<HTMLSelectElement>("inputFormatSelect"),
-  formatChecks: byId("formatChecks"),
-  previewTabsContainer: byId("previewTabsContainer"),
-  selectAllFormats: byId<HTMLInputElement>("selectAllFormats"),
-  outputMeta: byId("outputMeta"),
-  jsonlToggle: byId<HTMLInputElement>("jsonlToggle"),
-  jsonlToggleContainer: byId("jsonlToggleContainer"),
-  fakeIdToggle: byId<HTMLInputElement>("fakeIdToggle"),
-  fakeIdToggleContainer: byId("fakeIdToggleContainer"),
-  refreshTokenToggle: byId<HTMLInputElement>("refreshTokenToggle"),
-  refreshTokenToggleContainer: byId("refreshTokenToggleContainer"),
-  accountSection: byId("accountSection"),
-  clearAccountsButton: byId<HTMLButtonElement>("clearAccountsButton"),
-  accountRows: byId("accountRows"),
-  previewOutput: byId("previewOutput"),
-  jwtPopover: byId("jwtPopover"),
-  jwtPopoverBody: byId("jwtPopoverBody"),
-  jwtPopoverCopy: byId<HTMLButtonElement>("jwtPopoverCopy"),
-  copyButton: byId<HTMLButtonElement>("copyButton"),
-  downloadButton: byId<HTMLButtonElement>("downloadButton"),
-  downloadBtnText: byId<HTMLSpanElement>("downloadBtnText"),
-  sessionButton: byId<HTMLButtonElement>("sessionButton"),
-  fileButton: byId<HTMLButtonElement>("fileButton"),
-  folderButton: byId<HTMLButtonElement>("folderButton"),
-  addDraftButton: byId<HTMLButtonElement>("addDraftButton"),
-  clearButton: byId<HTMLButtonElement>("clearButton"),
-};
+initialize();
 
-const tooltip = createTooltip();
-const tooltipTargets = new WeakSet<HTMLElement>();
-
-init();
-
-function init(): void {
-  applyStoredPreferences();
-  applyOutputOptionsFromUrl();
-  syncPreferenceControls();
-  applyLocale();
-  applyTheme();
-  renderFormatControls();
+function initialize(): void {
+  applyPreferences(readStoredPreferences());
+  applyPreferences(parseOutputOptionsSearch(window.location.search));
+  acceptedDraftInputFormat = state.forcedInputFormat;
   bindEvents();
-  bindCollapsiblePanels();
-
-  // Initialize draft source from current textarea value (e.g. if retained on browser refresh)
-  const initialText = els.jsonInput.value.trim();
-  if (initialText) {
-    state.draftSource = { name: draftSourceName(), path: "draft", text: initialText };
-  }
-
-  recompute();
+  view.applyTheme(systemDarkQuery.matches);
+  view.applyLocale();
+  view.syncControls();
+  view.renderAll();
+  if (els.jsonInput.value.trim()) scheduleTextPreview();
 }
 
 function bindEvents(): void {
-  // Bind Segmented Control Theme Tabs
-  const themeControl = document.querySelector(".theme-control");
-  const themeTrigger = document.getElementById("themeToggleTrigger");
-
-  if (themeControl && themeTrigger) {
-    themeTrigger.setAttribute("aria-expanded", "false");
-    setThemeExpanded(false);
-
-    themeTrigger.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setThemeExpanded(!themeControl.classList.contains("expanded"));
-    });
-
-    document.addEventListener("click", (event) => {
-      if (!themeControl.contains(event.target as Node)) {
-        setThemeExpanded(false);
-      }
-    });
-  }
-
-  document.querySelectorAll(".theme-tab").forEach((tab) => {
-    tab.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const val = tab.getAttribute("data-value");
-      if (val && isThemeMode(val)) {
-        state.themeMode = val;
-        persistPreferences();
-        applyTheme();
-        setThemeExpanded(false);
-      }
-    });
+  els.jsonInput.addEventListener("input", scheduleTextPreview);
+  els.inputFormatSelect.addEventListener("change", () => {
+    state.forcedInputFormat = els.inputFormatSelect.value as InputFormat | "auto";
+    persistPreferences();
+    scheduleTextPreview();
   });
+  els.addDraftButton.addEventListener("click", () => void commitDraft());
+  els.clearButton.addEventListener("click", () => void clearDraftInput().catch(handleWorkerError));
+  els.clearAccountsButton.addEventListener("click", () => void clearAccounts().catch(handleWorkerError));
+  els.sessionButton.addEventListener("click", () => window.open(SESSION_URL, "_blank", "noopener,noreferrer"));
 
-  // Bind Segmented Control Language Tabs
-  const langControl = document.querySelector(".language-control");
-  const langTrigger = document.getElementById("languageToggleTrigger");
-
-  if (langControl && langTrigger) {
-    langTrigger.setAttribute("aria-expanded", "false");
-    setLanguageExpanded(false);
-
-    langTrigger.addEventListener("click", (event) => {
-      event.stopPropagation();
-      setLanguageExpanded(!langControl.classList.contains("expanded"));
-    });
-
-    document.addEventListener("click", (event) => {
-      if (!langControl.contains(event.target as Node)) {
-        setLanguageExpanded(false);
-      }
-    });
-  }
-
-  document.querySelectorAll<HTMLButtonElement>(".language-tab").forEach((tab) => {
-    tab.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const locale = normalizeLocale(tab.dataset.lang);
-      if (!locale || locale === state.locale) {
-        return;
-      }
-      state.locale = locale;
-      persistPreferenceState();
-      applyLocale();
-      renderFormatControls();
-      recompute();
-      setLanguageExpanded(false);
-    });
-  });
-
-  // Watch system dark-mode preference change
-  systemDarkQuery.addEventListener("change", () => {
-    if (state.themeMode === "system") {
-      applyTheme();
-    }
-  });
-
-  els.jsonInput.addEventListener("input", () => {
-    const hadDraftAccounts = draftAccounts().length > 0;
-    const text = els.jsonInput.value.trim();
-    state.draftSource = text ? { name: draftSourceName(), path: "draft", text } : undefined;
-    state.sourceErrors = [];
-    recompute();
-    if (!hadDraftAccounts && draftAccounts().length > 0) {
-      scrollDraftIntoAccountView();
-    }
-  });
-
-  els.fileInput.addEventListener("change", () => {
-    void readFiles(els.fileInput.files);
-  });
-  els.fileInput.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
+  els.fileInput.addEventListener("change", () => void importWorkerFiles(filesFromList(els.fileInput.files)));
   els.fileButton.addEventListener("click", (event) => {
     event.stopPropagation();
     els.fileInput.click();
+  });
+  els.dropZone.addEventListener("click", (event) => {
+    if (!(event.target instanceof HTMLElement) || !event.target.closest("button")) els.fileInput.click();
   });
   els.folderButton.addEventListener("click", (event) => {
     event.stopPropagation();
     void chooseDirectory();
   });
-  els.dropZone.addEventListener("click", (event) => {
-    if (event.target instanceof HTMLElement && event.target.closest("button, .drop-folder-button, input[type='file']")) {
-      return;
-    }
-    els.fileInput.click();
-  });
-
-  els.dropZone.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-    event.preventDefault();
-    els.fileInput.click();
-  });
-
-  els.dropZone.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    els.dropZone.classList.add("dragging");
-  });
-  els.dropZone.addEventListener("dragleave", () => {
-    els.dropZone.classList.remove("dragging");
-  });
-  els.dropZone.addEventListener("drop", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    hideDragOverlay();
-    els.dropZone.classList.remove("dragging");
-    void readDroppedData(event.dataTransfer);
-  });
-
-  window.addEventListener("dragenter", (event) => {
-    if (!hasFileDrag(event)) {
-      return;
-    }
-    event.preventDefault();
-    if (isInsideDropZone(event)) {
-      hideDragOverlay();
-      return;
-    }
-    dragDepth += 1;
-    showDragOverlay();
-  });
-
-  window.addEventListener("dragover", (event) => {
-    if (!hasFileDrag(event)) {
-      return;
-    }
-    event.preventDefault();
-    if (isInsideDropZone(event)) {
-      hideDragOverlay();
-      return;
-    }
-    showDragOverlay();
-  });
-
-  window.addEventListener("dragleave", (event) => {
-    if (!hasFileDrag(event) && !els.dragOverlay.classList.contains("active")) {
-      return;
-    }
-    if (isLeavingWindow(event)) {
-      hideDragOverlay();
-      return;
-    }
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0) {
-      hideDragOverlay();
-    }
-  });
-
+  window.addEventListener("dragenter", onWindowDragEnter);
+  window.addEventListener("dragover", onWindowDragOver);
+  window.addEventListener("dragleave", onWindowDragLeave);
   window.addEventListener("drop", (event) => {
-    if (!hasFileDrag(event)) {
-      return;
-    }
+    if (!hasFileDrag(event)) return;
     event.preventDefault();
     hideDragOverlay();
-    void readDroppedData(event.dataTransfer);
+    void importCollectedFiles((signal) => filesFromDrop(event.dataTransfer, signal));
   });
-
   window.addEventListener("blur", hideDragOverlay);
 
   els.selectAllFormats.addEventListener("change", () => {
-    const formats = visibleFormats();
+    const visible = state.summary.applicableFormats;
     state.selectedFormats = els.selectAllFormats.checked
-      ? FORMATS.filter((format) => state.selectedFormats.includes(format) || formats.includes(format))
-      : state.selectedFormats.filter((format) => !formats.includes(format));
-    syncPreviewFormat(currentAccountSource().accounts);
-    persistPreferenceState();
-    renderFormatControls();
-    recomputeOutput();
+      ? ALL_FORMATS.filter((format) => state.selectedFormats.includes(format) || visible.includes(format))
+      : state.selectedFormats.filter((format) => !visible.includes(format));
+    invalidateOutputPlan();
+    syncPreviewFormat();
+    syncAccountSelection();
+    persistOutputState();
+    view.renderFormats();
+    void updateRange();
+    void updatePreview();
   });
-
   els.jsonlToggle.addEventListener("change", () => {
-    state.outputTextMode = els.jsonlToggle.checked ? "jsonl" : "json";
-    persistPreferenceState();
-    renderFormatControls();
-    recomputeOutput();
+    state.textMode = els.jsonlToggle.checked ? "jsonl" : "json";
+    invalidateOutputPlan();
+    syncAccountSelection();
+    persistOutputState();
+    view.renderFormats();
+    void updateRange();
+    void updatePreview();
   });
-
   els.fakeIdToggle.addEventListener("change", () => {
     state.allowSyntheticIdToken = els.fakeIdToggle.checked;
-    persistPreferenceState();
-    recomputeOutput();
+    persistOutputState();
+    void updatePreview();
   });
-
   els.refreshTokenToggle.addEventListener("change", () => {
     state.includeRefreshToken = els.refreshTokenToggle.checked;
-    persistPreferenceState();
-    recomputeOutput();
+    persistOutputState();
+    void updatePreview();
   });
+  els.verifyTokenToggle.addEventListener("change", () => void setTokenVerification(els.verifyTokenToggle.checked));
+  els.downloadButton.addEventListener("click", () => void download());
+  els.copyButton.addEventListener("click", () => void copyPreview());
 
-  els.copyButton.addEventListener("click", () => {
-    void copyPreview();
-  });
-
-  els.previewOutput.addEventListener("mouseover", (event) => {
-    const trigger = jwtHoverTrigger(event.target);
-    if (trigger) {
-      scheduleJwtPopover(trigger);
-    }
-  });
-  els.previewOutput.addEventListener("mouseout", (event) => {
-    if (jwtHoverTrigger(event.target)) {
-      scheduleJwtPopoverHide();
-    }
-  });
-  els.previewOutput.addEventListener("focusin", (event) => {
-    const trigger = jwtHoverTrigger(event.target);
-    if (trigger) {
-      scheduleJwtPopover(trigger);
-    }
-  });
-  els.previewOutput.addEventListener("focusout", (event) => {
-    if (jwtHoverTrigger(event.target)) {
-      scheduleJwtPopoverHide();
-    }
-  });
-  els.previewOutput.addEventListener("click", (event) => {
-    const trigger = jwtHoverTrigger(event.target);
-    if (trigger) {
-      showJwtPopover(trigger);
-      jwtPopoverPinned = true;
-    }
-  });
-  els.jwtPopover.addEventListener("mouseenter", cancelJwtPopoverHide);
-  els.jwtPopover.addEventListener("mouseleave", scheduleJwtPopoverHide);
-  els.jwtPopoverCopy.addEventListener("click", () => {
-    const text = els.jwtPopoverBody.textContent;
-    if (text) {
-      void navigator.clipboard.writeText(text).then(() => {
-        showCopySuccessFeedback();
-      });
-    }
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      hideJwtPopover();
-    }
-  });
-  document.addEventListener("click", (event) => {
-    if (jwtPopoverPinned && !els.jwtPopover.contains(event.target as Node) && !jwtHoverTrigger(event.target)) {
-      hideJwtPopover();
-    }
-  });
-  window.addEventListener("scroll", (event) => {
-    if (event.target instanceof HTMLElement && els.jwtPopover.contains(event.target)) {
-      return;
-    }
-    hideJwtPopover();
-  }, true);
-
-  els.downloadButton.addEventListener("click", () => {
-    void downloadCurrentPlan();
-  });
-
-  els.inputFormatSelect.addEventListener("change", () => {
-    state.forcedInputFormat = els.inputFormatSelect.value as InputFormat | "auto";
-    persistPreferences();
-    recompute();
-  });
-
-  els.clearAccountsButton.addEventListener("click", () => {
-    state.accounts = [];
-    state.selectedAccountIndex = 0;
-    recompute();
-  });
-
-  els.sessionButton.addEventListener("click", () => {
-    window.open(SESSION_URL, "_blank", "noopener,noreferrer");
-  });
-
-  els.addDraftButton.addEventListener("click", () => {
-    addDraftAccounts();
-  });
-
-  els.clearButton.addEventListener("click", () => {
-    els.jsonInput.value = "";
-    clearFileInputs();
-    state.draftSource = undefined;
-    state.sourceErrors = [];
-    state.forcedInputFormat = "auto";
-    persistPreferences();
-    recompute();
-  });
-
+  els.accountRows.addEventListener("scroll", () => void updateRange());
   els.accountRows.addEventListener("click", (event) => {
-    const removeButton = accountRemoveButton(event.target);
-    if (removeButton) {
-      const index = accountRemoveIndex(removeButton);
-      if (index !== undefined) {
-        removeAccount(index);
-      }
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>(".account-row");
+    if (!row) return;
+    const id = row.dataset.accountId;
+    if (target.closest(".remove-account-button") && id) {
+      void removeAccount(id).catch(handleWorkerError);
       return;
     }
-    const row = accountEventRow(event.target);
-    if (!row) {
-      return;
-    }
-    const index = accountRowIndex(row);
-    if (index !== undefined) {
-      selectPreviewAccount(index);
+    if (id && row.classList.contains("is-selectable")) {
+      state.selectedAccountId = id;
+      view.renderSelectedRow();
+      void updatePreview();
     }
   });
+  els.accountSearch.addEventListener("input", () => {
+    window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      state.query = els.accountSearch.value;
+      requireVisibleSelection = shouldRequireVisibleSelection(state.query, accountRowsSelectable(state));
+      els.accountRows.scrollTop = 0;
+      void updateRange();
+    }, 100);
+  });
 
-  els.accountRows.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-    const row = accountEventRow(event.target);
-    if (!row || event.target !== row) {
-      return;
-    }
-    const index = accountRowIndex(row);
-    if (index !== undefined) {
-      event.preventDefault();
-      selectPreviewAccount(index);
-    }
+  els.cancelTaskButton.addEventListener("click", () => void cancelTask());
+  bindThemeAndLanguage();
+  bindJwtPopover();
+  bindOutputConfigCollapse();
+  systemDarkQuery.addEventListener("change", () => {
+    if (state.themeMode === "system") view.applyTheme(systemDarkQuery.matches);
   });
 }
 
-function appendChevrons(): void {
-  const outputTitle = document.getElementById("outputTitle");
-  if (outputTitle && !outputTitle.parentElement?.querySelector(".chevron-icon")) {
-    outputTitle.insertAdjacentHTML("afterend", CHEVRON_SVG);
-  }
-}
-
-function bindCollapsiblePanels(): void {
-  const titleLine = document.querySelector(".title-line");
-  const configArea = document.getElementById("outputConfigArea");
-  const resultHeader = document.querySelector(".result-header");
-  if (titleLine && configArea && resultHeader) {
-    titleLine.classList.add("collapsible-header");
-    titleLine.addEventListener("click", () => {
-      configArea.classList.toggle("is-collapsed");
-      resultHeader.classList.toggle("is-collapsed");
+function bindThemeAndLanguage(): void {
+  const themeControl = document.querySelector(".theme-control");
+  const themeTrigger = document.getElementById("themeToggleTrigger");
+  if (themeControl && themeTrigger) {
+    themeTrigger.setAttribute("aria-expanded", "false");
+    setThemeExpanded(false);
+    themeTrigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setThemeExpanded(!themeControl.classList.contains("expanded"));
+    });
+    document.addEventListener("click", (event) => {
+      if (!themeControl.contains(event.target as Node)) setThemeExpanded(false);
     });
   }
+  document.querySelectorAll<HTMLButtonElement>(".theme-tab").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const mode = button.dataset.value;
+      if (mode === "system" || mode === "light" || mode === "dark") {
+        state.themeMode = mode;
+        persistPreferences();
+        view.applyTheme(systemDarkQuery.matches);
+        setThemeExpanded(false);
+      }
+    });
+  });
+
+  const languageControl = document.querySelector(".language-control");
+  const languageTrigger = document.getElementById("languageToggleTrigger");
+  if (languageControl && languageTrigger) {
+    languageTrigger.setAttribute("aria-expanded", "false");
+    setLanguageExpanded(false);
+    languageTrigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setLanguageExpanded(!languageControl.classList.contains("expanded"));
+    });
+    document.addEventListener("click", (event) => {
+      if (!languageControl.contains(event.target as Node)) setLanguageExpanded(false);
+    });
+  }
+  document.querySelectorAll<HTMLButtonElement>(".language-tab").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const locale = normalizeLocale(button.dataset.lang);
+      if (!locale) return;
+      state.locale = locale;
+      persistOutputState();
+      view.applyLocale();
+      view.renderAll();
+      void updateRange();
+      void updatePreview();
+      setLanguageExpanded(false);
+    });
+  });
 }
 
-function applyOutputOptionsFromUrl(): void {
-  applyPreferences(parseOutputOptionsSearch(window.location.search));
+function setThemeExpanded(expanded: boolean): void {
+  const themeControl = document.querySelector(".theme-control");
+  const themeTrigger = document.getElementById("themeToggleTrigger");
+  themeControl?.classList.toggle("expanded", expanded);
+  themeTrigger?.setAttribute("aria-expanded", String(expanded));
 }
 
-function applyStoredPreferences(): void {
-  applyPreferences(readStoredPreferences());
+function setLanguageExpanded(expanded: boolean): void {
+  const languageControl = document.querySelector(".language-control");
+  const languageTrigger = document.getElementById("languageToggleTrigger");
+  languageControl?.classList.toggle("expanded", expanded);
+  languageTrigger?.setAttribute("aria-expanded", String(expanded));
+}
+
+function bindOutputConfigCollapse(): void {
+  const configArea = document.getElementById("outputConfigArea");
+  const resultHeader = document.querySelector(".result-header");
+  const outputTitle = document.getElementById("outputTitle");
+  const titleLine = outputTitle?.parentElement;
+  if (!configArea || !resultHeader || !outputTitle || !titleLine) return;
+  if (!outputTitle.parentElement?.querySelector(".chevron-icon")) {
+    const chevron = document.createElement("span");
+    chevron.className = "chevron-icon-wrap";
+    chevron.innerHTML = `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+    outputTitle.insertAdjacentElement("afterend", chevron);
+  }
+  const toggle = () => {
+    configArea.classList.toggle("is-collapsed");
+    resultHeader.classList.toggle("is-collapsed");
+  };
+  titleLine.classList.add("collapsible-header");
+  titleLine.addEventListener("click", toggle);
+}
+
+function scheduleTextPreview(): void {
+  draftRevision += 1;
+  const revision = draftRevision;
+  state.draftReady = false;
+  state.transientError = undefined;
+  if (state.summary.scope === "draft") {
+    invalidateCurrentPreview();
+    if (!heavyBusy) void discardAcceptedDraft(revision);
+  }
+  view.renderInputState();
+  window.clearTimeout(inputTimer);
+  inputTimer = window.setTimeout(() => {
+    inputTimer = undefined;
+    if (heavyBusy) {
+      pendingTextPreview = true;
+      return;
+    }
+    pendingTextPreview = false;
+    void previewText();
+  }, 250);
+}
+
+async function discardAcceptedDraft(revision: number): Promise<void> {
+  try {
+    const response = await client.discardDraft();
+    if (revision !== draftRevision || response.type !== "discardDraftResult") return;
+    acceptedDraftText = "";
+    acceptedDraftInputFormat = state.forcedInputFormat;
+    applySummary(response.summary);
+  } catch (error) {
+    if (revision === draftRevision && !isAbortError(error)) applyErrorSummary(error);
+  }
+}
+
+async function previewText(): Promise<void> {
+  const text = els.jsonInput.value;
+  const inputFormat = state.forcedInputFormat;
+  const revision = draftRevision;
+  const sequence = ++taskSequence;
+  try {
+    const response = await withLoading(
+      state.locale === "zh" ? "正在解析凭证" : "Parsing credentials",
+      (progress) => client.previewText(
+        text,
+        inputFormat === "auto" ? undefined : inputFormat,
+        state.verifyTokens,
+        progress,
+      ),
+      sequence,
+    );
+    if (
+      sequence !== taskSequence
+      || revision !== draftRevision
+      || text !== els.jsonInput.value
+      || inputFormat !== state.forcedInputFormat
+      || response.type !== "previewTextResult"
+    ) return;
+    acceptedDraftText = text;
+    acceptedDraftInputFormat = inputFormat;
+    state.draftReady = response.summary.scope === "draft" && text.trim().length > 0;
+    applySummary(response.summary, undefined, response.summary.scope === "draft");
+  } catch (error) {
+    if (sequence !== taskSequence || revision !== draftRevision) return;
+    state.draftReady = false;
+    applyErrorSummary(error);
+    if (!isAbortError(error)) showError(error);
+  }
+}
+
+async function commitDraft(): Promise<void> {
+  if (!state.draftReady) return;
+  const response = await runHeavy(
+    state.locale === "zh" ? "正在加入账号" : "Adding accounts",
+    (progress) => client.commitDraft(state.verifyTokens, progress),
+  );
+  if (response?.type !== "commitDraftResult") return;
+  pendingTextPreview = false;
+  window.clearTimeout(inputTimer);
+  inputTimer = undefined;
+  els.jsonInput.value = "";
+  acceptedDraftText = "";
+  acceptedDraftInputFormat = state.forcedInputFormat;
+  state.draftReady = false;
+  applySummary(response.summary, response.stats.firstAffectedId);
+  showToast(webMessages().sourceImported(
+    response.stats.processed,
+    response.stats.added,
+    response.stats.merged,
+    response.stats.skippedForged,
+  ));
+}
+
+async function clearDraftInput(): Promise<void> {
+  draftRevision += 1;
+  const revision = draftRevision;
+  pendingTextPreview = false;
+  window.clearTimeout(inputTimer);
+  inputTimer = undefined;
+  els.jsonInput.value = "";
+  state.draftReady = false;
+  invalidateCurrentPreview();
+  view.renderInputState();
+  const response = await client.discardDraft();
+  if (revision !== draftRevision || els.jsonInput.value !== "" || response.type !== "discardDraftResult") return;
+  acceptedDraftText = "";
+  acceptedDraftInputFormat = "auto";
+  state.forcedInputFormat = "auto";
+  persistPreferences();
+  applySummary(response.summary);
+}
+
+async function clearAccounts(): Promise<void> {
+  const response = await client.clear();
+  if (response.type === "clearResult") {
+    state.selectedAccountId = undefined;
+    state.query = "";
+    els.accountSearch.value = "";
+    els.accountRows.scrollTop = 0;
+    applySummary(response.summary);
+  }
+}
+
+async function importWorkerFiles(files: WorkerFile[]): Promise<void> {
+  await importCollectedFiles(async () => files);
+}
+
+async function importCollectedFiles(collect: (signal: AbortSignal) => Promise<WorkerFile[]>): Promise<void> {
+  els.fileInput.value = "";
+  const response = await runHeavy(
+    state.locale === "zh" ? "正在导入文件" : "Importing files",
+    async (progress, signal) => {
+      const files = await collect(signal);
+      throwIfAborted(signal);
+      if (files.length === 0) throw new Error(webMessages().chooseCredentialFiles);
+      return client.importFiles(files, state.verifyTokens, progress);
+    },
+  );
+  if (response?.type !== "importFilesResult") return;
+  const preferredAccountId = response.summary.scope === "loaded" ? response.stats.firstAffectedId : undefined;
+  applySummary(response.summary, preferredAccountId);
+  showToast(webMessages().fileImported(
+    response.stats.processed,
+    response.stats.added,
+    response.stats.merged,
+    response.stats.skippedForged,
+  ));
+}
+
+async function setTokenVerification(enabled: boolean): Promise<void> {
+  const revision = ++tokenVerificationRevision;
+  if (!enabled) {
+    commitTokenVerificationSetting(false);
+    if (!state.busy) void updatePreview();
+    return;
+  }
+
+  const response = await runHeavy(
+    state.locale === "zh" ? "正在重新验证 token" : "Re-verifying tokens",
+    (progress) => client.reverify(state.selectedAccountId, progress),
+  );
+  if (response?.type !== "reverifyResult") {
+    if (revision === tokenVerificationRevision) view.syncControls();
+    return;
+  }
+
+  if (response.selectedAccountRemoved) {
+    state.selectedAccountId = undefined;
+    requireVisibleSelection = true;
+  }
+  if (revision === tokenVerificationRevision) commitTokenVerificationSetting(true);
+  applySummary(response.summary);
+}
+
+function commitTokenVerificationSetting(enabled: boolean): void {
+  state.verifyTokens = enabled;
+  invalidateOutputPlan();
+  persistOutputState();
+  view.syncControls();
+  view.renderOutputHeader();
+}
+
+async function removeAccount(id: string): Promise<void> {
+  const response = await client.remove(id);
+  if (response.type !== "removeResult") return;
+  if (state.selectedAccountId === id) {
+    state.selectedAccountId = response.suggestedAccountId;
+    if (state.query) requireVisibleSelection = true;
+  }
+  applySummary(response.summary);
+}
+
+async function cancelTask(): Promise<void> {
+  const inputAtCancel = els.jsonInput.value;
+  const hadScheduledPreview = inputTimer !== undefined || pendingTextPreview;
+  localTaskController?.abort(new DOMException("Aborted", "AbortError"));
+  window.clearTimeout(inputTimer);
+  inputTimer = undefined;
+  pendingTextPreview = false;
+  try {
+    const response = await client.cancel();
+    if (response.type === "cancelResult") {
+      if (response.cancelledTask === "previewText" && els.jsonInput.value === inputAtCancel) {
+        els.jsonInput.value = acceptedDraftText;
+        state.forcedInputFormat = acceptedDraftInputFormat;
+        state.draftReady = response.summary.scope === "draft" && acceptedDraftText.trim().length > 0;
+        persistPreferences();
+      } else if (response.cancelledTask !== "previewText" && hadScheduledPreview) {
+        if (heavyBusy) pendingTextPreview = true;
+        else scheduleTextPreview();
+      }
+      applySummary(response.summary);
+    }
+  } catch (error) {
+    if (hadScheduledPreview) {
+      if (heavyBusy) pendingTextPreview = true;
+      else scheduleTextPreview();
+    }
+    if (!isAbortError(error)) showError(error);
+  }
+}
+
+async function runHeavy(
+  stage: string,
+  task: (progress: (value: WorkerProgress) => void, signal: AbortSignal) => Promise<WorkerClientResponse>,
+): Promise<WorkerClientResponse | undefined> {
+  if (heavyBusy) return undefined;
+  const sequence = ++taskSequence;
+  if (inputTimer !== undefined) {
+    window.clearTimeout(inputTimer);
+    inputTimer = undefined;
+    pendingTextPreview = true;
+  } else if (state.busy && !heavyBusy) {
+    pendingTextPreview = true;
+  }
+  heavyBusy = true;
+  const controller = new AbortController();
+  localTaskController = controller;
+  state.transientError = undefined;
+  try {
+    return await withLoading(stage, (progress) => task(progress, controller.signal), sequence, true);
+  } catch (error) {
+    applyErrorSummary(error);
+    if (!isAbortError(error)) showError(error);
+    return undefined;
+  } finally {
+    if (localTaskController === controller) localTaskController = undefined;
+    heavyBusy = false;
+    if (pendingTextPreview) {
+      window.setTimeout(() => {
+        if (heavyBusy || !pendingTextPreview) return;
+        pendingTextPreview = false;
+        void previewText();
+      }, 0);
+    }
+  }
+}
+
+async function withLoading<T>(
+  stage: string,
+  task: (progress: (value: WorkerProgress) => void) => Promise<T>,
+  sequence: number,
+  immediate = false,
+): Promise<T> {
+  state.busy = true;
+  view.syncControls();
+  view.renderInputState();
+  view.renderOutputHeader();
+  window.clearTimeout(loadingTimer);
+  if (immediate) {
+    els.taskStage.textContent = stage;
+    els.taskProgress.textContent = "";
+    els.taskOverlay.hidden = false;
+  } else {
+    loadingTimer = window.setTimeout(() => {
+      if (sequence === taskSequence) {
+        els.taskStage.textContent = stage;
+        els.taskProgress.textContent = "";
+        els.taskOverlay.hidden = false;
+      }
+    }, 150);
+  }
+  try {
+    return await task((progress) => {
+      if (sequence !== taskSequence) return;
+      els.taskStage.textContent = phaseLabel(progress.phase);
+      els.taskProgress.textContent = progress.total
+        ? `${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`
+        : progress.completed.toLocaleString();
+    });
+  } finally {
+    if (sequence === taskSequence) {
+      window.clearTimeout(loadingTimer);
+      els.taskOverlay.hidden = true;
+      state.busy = false;
+      view.syncControls();
+      view.renderInputState();
+      view.renderOutputHeader();
+    }
+  }
+}
+
+function phaseLabel(phase: WorkerProgress["phase"]): string {
+  const zh = { parse: "正在解析", normalize: "正在整理账号", verify: "正在验证 token", store: "正在去重", export: "正在生成文件" };
+  const en = { parse: "Parsing", normalize: "Normalizing accounts", verify: "Verifying tokens", store: "Deduplicating", export: "Building files" };
+  return (state.locale === "zh" ? zh : en)[phase];
+}
+
+function applySummary(summary: WorkerSummary, preferredAccountId?: string, resetSelection = false): void {
+  const scopeChanged = state.summary.scope !== summary.scope;
+  const resetForPreferredAccount = shouldResetViewportForPreferredAccount(preferredAccountId, state.query);
+  state.summary = summary;
+  state.transientError = undefined;
+  invalidateOutputPlan();
+  if (scopeChanged || resetForPreferredAccount) resetAccountViewport();
+  if (summary.active.total === 0 || resetSelection) state.selectedAccountId = undefined;
+  else if (preferredAccountId && !resetForPreferredAccount) state.selectedAccountId = preferredAccountId;
+  syncPreviewFormat();
+  syncAccountSelection();
+  view.renderAll();
+  void updateRange();
+  void updatePreview();
+}
+
+async function updateRange(): Promise<void> {
+  const request = ++rangeRequest;
+  const total = state.summary.active.total;
+  if (total === 0) {
+    view.clearRange();
+    return;
+  }
+  const offset = Math.max(0, Math.floor(els.accountRows.scrollTop / ROW_HEIGHT) - ROW_OVERSCAN);
+  const response = await client.range(state.summary.scope, offset, RANGE_LIMIT, state.query);
+  if (request !== rangeRequest || response.type !== "rangeResult") return;
+  const selectedAccountId = selectAccountForRange(
+    state.selectedAccountId,
+    response.items.filter((account) => accountRowSelectable(state, account.provider)),
+    requireVisibleSelection,
+    accountRowsSelectable(state),
+  );
+  requireVisibleSelection = false;
+  if (selectedAccountId !== state.selectedAccountId) {
+    state.selectedAccountId = selectedAccountId;
+    void updatePreview();
+  }
+  view.renderRange(response);
+}
+
+async function updatePreview(): Promise<void> {
+  const request = ++previewRequest;
+  hideJwt();
+  const formats = effectiveFormats();
+  if (state.summary.active.total === 0 || formats.length === 0) {
+    invalidateOutputPlan();
+    state.previewText = "";
+    state.previewPath = "";
+    state.previewShown = 0;
+    state.previewTotal = 0;
+    state.previewBlocked = undefined;
+    view.renderFormats();
+    view.renderPreview();
+    view.renderOutputHeader();
+    return;
+  }
+  syncPreviewFormat();
+  syncAccountSelection();
+  const selectable = accountRowsSelectable(state);
+  const selectedAccountId = selectable
+    ? requireVisibleSelection || (state.query.length > 0 && !state.selectedAccountId)
+      ? null
+      : state.selectedAccountId
+    : undefined;
+  let response: WorkerClientResponse;
+  try {
+    response = await client.preview({
+      formats,
+      previewFormat: state.previewFormat,
+      outputModes: state.outputModes,
+      textMode: state.textMode,
+      selectedAccountId,
+      includeRefreshToken: state.includeRefreshToken,
+      allowSyntheticIdToken: state.allowSyntheticIdToken,
+      verifyTokens: state.verifyTokens,
+    });
+  } catch (error) {
+    if (request === previewRequest && !isAbortError(error)) handleWorkerError(error);
+    return;
+  }
+  if (request !== previewRequest || response.type !== "previewResult") return;
+  if (selectable && response.selectedAccountId !== state.selectedAccountId) {
+    state.selectedAccountId = response.selectedAccountId;
+    void updateRange();
+  }
+  state.outputPlan = response.outputPlan;
+  if (response.format) state.previewFormat = response.format;
+  state.previewText = response.text;
+  state.previewPath = response.path;
+  state.previewShown = response.shownAccounts;
+  state.previewTotal = response.totalAccounts;
+  state.previewBlocked = response.blockedVerification?.status;
+  view.renderFormats();
+  view.renderPreview();
+  view.renderOutputHeader();
+}
+
+async function download(): Promise<void> {
+  const formats = effectiveFormats();
+  if (
+    state.busy
+    || formats.length === 0
+    || state.outputPlan.fileCount === 0
+  ) return;
+  const response = await runHeavy(
+    state.locale === "zh" ? "正在生成下载" : "Building download",
+    (progress) => client.export({
+      formats,
+      outputModes: state.outputModes,
+      textMode: state.textMode,
+      includeRefreshToken: state.includeRefreshToken,
+      allowSyntheticIdToken: state.allowSyntheticIdToken,
+      verifyTokens: state.verifyTokens,
+    }, progress),
+  );
+  if (response?.type !== "exportResult") return;
+  downloadBlob(response.exportBlob, response.name);
+  showToast(response.mime === "application/zip" ? webMessages().exportZipToast(response.name) : webMessages().exportFileToast);
+}
+
+function effectiveFormats(): OutputFormat[] {
+  return selectEffectiveFormats(state);
+}
+
+function invalidateOutputPlan(): void {
+  state.outputPlan = emptyOutputPlan;
+}
+
+function invalidateCurrentPreview(): void {
+  previewRequest += 1;
+  invalidateOutputPlan();
+  state.previewText = "";
+  state.previewPath = "";
+  state.previewShown = 0;
+  state.previewTotal = 0;
+  state.previewBlocked = undefined;
+  view.renderFormats();
+  view.renderPreview();
+  view.renderOutputHeader();
+}
+
+function syncPreviewFormat(): void {
+  const formats = effectiveFormats();
+  if (formats.includes(state.previewFormat)) return;
+  state.previewFormat = formats[0] ?? "cpa";
+  state.selectedAccountId = undefined;
+  requireVisibleSelection = formats.length > 0
+    && shouldRequireVisibleSelection(state.query, accountRowsSelectable(state));
+}
+
+function syncAccountSelection(): void {
+  if (!accountRowsSelectable(state)) {
+    state.selectedAccountId = undefined;
+    requireVisibleSelection = false;
+  }
+  view.renderSelectedRow();
+}
+
+function resetAccountViewport(): void {
+  rangeRequest += 1;
+  state.query = "";
+  state.selectedAccountId = undefined;
+  requireVisibleSelection = false;
+  els.accountSearch.value = "";
+  els.accountRows.scrollTop = 0;
+  view.clearRange();
 }
 
 function applyPreferences(options: Partial<WebPreferences>): void {
-  if (options.selectedFormats) {
-    state.selectedFormats = options.selectedFormats;
-  }
-  if (options.outputTextMode) {
-    state.outputTextMode = options.outputTextMode;
-  }
-  if (options.outputModes) {
-    state.outputModes = {
-      ...state.outputModes,
-      ...options.outputModes,
-    };
-  }
-  if (options.previewFormat) {
-    state.previewFormat = options.previewFormat;
-  }
-  if (!state.selectedFormats.includes(state.previewFormat)) {
-    state.previewFormat = state.selectedFormats[0] ?? "cpa";
-  }
-  if (options.allowSyntheticIdToken !== undefined) {
-    state.allowSyntheticIdToken = options.allowSyntheticIdToken;
-  }
-  if (options.includeRefreshToken !== undefined) {
-    state.includeRefreshToken = options.includeRefreshToken;
-  }
-  if (options.locale) {
-    state.locale = options.locale;
-  }
-  if (options.themeMode) {
-    state.themeMode = options.themeMode;
-  }
-  if (options.forcedInputFormat) {
-    state.forcedInputFormat = options.forcedInputFormat;
-  }
-}
-
-function syncPreferenceControls(): void {
-  els.fakeIdToggle.checked = state.allowSyntheticIdToken;
-  els.refreshTokenToggle.checked = state.includeRefreshToken;
-  els.jsonlToggle.checked = state.outputTextMode === "jsonl";
-}
-
-function persistPreferenceState(): void {
-  writeOutputOptionsToUrl();
-  persistPreferences();
+  if (options.selectedFormats) state.selectedFormats = options.selectedFormats;
+  if (options.outputTextMode) state.textMode = options.outputTextMode;
+  if (options.outputModes) state.outputModes = { ...state.outputModes, ...options.outputModes };
+  if (options.previewFormat) state.previewFormat = options.previewFormat;
+  if (options.allowSyntheticIdToken !== undefined) state.allowSyntheticIdToken = options.allowSyntheticIdToken;
+  if (options.includeRefreshToken !== undefined) state.includeRefreshToken = options.includeRefreshToken;
+  if (options.verifyTokens !== undefined) state.verifyTokens = options.verifyTokens;
+  if (options.locale) state.locale = options.locale;
+  if (options.themeMode) state.themeMode = options.themeMode;
+  if (options.forcedInputFormat) state.forcedInputFormat = options.forcedInputFormat;
 }
 
 function persistPreferences(): void {
   writeStoredPreferences({
     selectedFormats: state.selectedFormats,
-    outputTextMode: state.outputTextMode,
+    outputTextMode: state.textMode,
     outputModes: state.outputModes,
     previewFormat: state.previewFormat,
     allowSyntheticIdToken: state.allowSyntheticIdToken,
     includeRefreshToken: state.includeRefreshToken,
+    verifyTokens: state.verifyTokens,
     locale: state.locale,
     themeMode: state.themeMode,
     forcedInputFormat: state.forcedInputFormat,
   });
 }
 
-function writeOutputOptionsToUrl(): void {
-  window.history.replaceState(
-    null,
-    "",
-    outputOptionsUrl(window.location.href, {
-      selectedFormats: state.selectedFormats,
-      outputTextMode: state.outputTextMode,
-      outputModes: state.outputModes,
-      previewFormat: state.previewFormat,
-      allowSyntheticIdToken: state.allowSyntheticIdToken,
-      includeRefreshToken: state.includeRefreshToken,
-      locale: state.locale,
-    }),
-  );
+function persistOutputState(): void {
+  persistPreferences();
+  window.history.replaceState(null, "", outputOptionsUrl(window.location.href, {
+    selectedFormats: state.selectedFormats,
+    outputTextMode: state.textMode,
+    outputModes: state.outputModes,
+    previewFormat: state.previewFormat,
+    allowSyntheticIdToken: state.allowSyntheticIdToken,
+    includeRefreshToken: state.includeRefreshToken,
+    verifyTokens: state.verifyTokens,
+    locale: state.locale,
+  }));
 }
 
-function webMessages(): ReturnType<typeof messagesFor>["web"] {
-  return messagesFor(state.locale).web;
-}
-
-function draftSourceName(): string {
-  return webMessages().accountLabelPrefixDraft("").trim();
-}
-
-function applyLocale(): void {
-  const text = webMessages();
-  document.documentElement.lang = state.locale === "zh" ? "zh-CN" : "en";
-  document.title = text.pageTitle;
-  if (state.draftSource?.path === "draft") {
-    state.draftSource = { ...state.draftSource, name: draftSourceName() };
-  }
-
-  setText("page-title", text.appTitle);
-  setText("pageNotice", text.notice);
-  setText("dragTitle", text.dragTitle);
-  setText("dragSub", text.dragSub);
-  setText("themeLabelText", text.themeLabel);
-  setText("languageLabelText", text.languageLabel);
-  setText("inputTitle", text.inputTitle);
-  setText("sessionButtonText", text.sessionButton);
-  setText("addDraftButtonText", text.addDraftButton);
-  setText("clearButtonText", text.clearButton);
-  setText("dropTitle", text.dropTitle);
-  setText("dropSub", text.dropSub);
-  setText("fileButton", text.chooseFile);
-  setText("folderButton", text.chooseFolder);
-  els.folderButton.hidden = !canChooseDirectory();
-  setText("outputTitle", text.outputTitle);
-  setText("downloadBtnText", text.downloadDefault);
-  setText("outputOptionsLabel", text.outputOptions);
-  setText("exportFormatLabel", text.exportFormat);
-  setText("jsonlToggleText", text.jsonlFormat);
-  setText("fakeIdToggleText", text.fakeId);
-  setText("refreshTokenToggleText", text.refreshToken);
-  setText("account-title", text.accountTitle);
-  setText("clearAccountsButtonText", text.clearAccounts);
-  setText("accountColumnIdentity", text.accountColumns[0]);
-  setText("accountColumnPlan", text.accountColumns[1]);
-  setText("accountColumnExpires", text.accountColumns[2]);
-  setText("accountColumnAction", text.accountColumns[3]);
-  setText("copyBtnText", text.copyPreview);
-  appendChevrons();
-
-  els.jsonInput.placeholder = text.inputPlaceholder;
-  els.jsonInput.setAttribute("aria-label", text.inputAria);
-  els.inputFormatSelect.setAttribute("aria-label", text.inputFormatAria);
-  els.dropZone.setAttribute("aria-label", text.dropZoneAria);
-  els.selectAllFormats.setAttribute("aria-label", text.selectAllFormatsAria);
-  els.accountRows.setAttribute("aria-label", text.accountListAria);
-  document.querySelector(".workspace")?.setAttribute("aria-label", text.appTitle);
-  document.querySelector(".output-toolbar")?.setAttribute("aria-label", text.outputSettingsAria);
-  document.querySelector(".preview-section")?.setAttribute("aria-label", text.previewAria);
-  els.previewTabsContainer.setAttribute("aria-label", text.previewTabsAria);
-  byId("themeToggleTrigger").setAttribute("aria-label", text.themeAria);
-  document.querySelector(".language-control")?.setAttribute("aria-label", text.languageAria);
-
-  const themeLabels: Record<ThemeMode, string> = {
-    system: text.themeSystem,
-    light: text.themeLight,
-    dark: text.themeDark,
-  };
-  document.querySelectorAll<HTMLButtonElement>(".theme-tab").forEach((tab) => {
-    const value = tab.dataset.value;
-    if (value && isThemeMode(value)) {
-      tab.textContent = themeLabels[value];
-    }
+function bindJwtPopover(): void {
+  els.previewOutput.addEventListener("mouseover", (event) => {
+    const trigger = jwtHoverTrigger(event.target);
+    if (trigger) scheduleJwtPopover(trigger);
   });
-
-  document.querySelectorAll<HTMLButtonElement>(".language-tab").forEach((tab) => {
-    const active = tab.dataset.lang === state.locale;
-    tab.classList.toggle("active", active);
-    tab.setAttribute("aria-pressed", String(active));
+  els.previewOutput.addEventListener("mouseout", (event) => {
+    if (jwtHoverTrigger(event.target)) scheduleJwtPopoverHide();
   });
-
-  bindTooltip(els.jsonlToggleContainer, text.jsonlTooltip);
-  bindTooltip(els.fakeIdToggleContainer, text.fakeIdTooltip);
-  bindTooltip(els.refreshTokenToggleContainer, text.refreshTokenTooltip);
-}
-
-function renderFormatControls(): void {
-  const text = webMessages();
-  const formats = visibleFormats();
-  els.formatChecks.replaceChildren(
-    ...formats.map((format) => {
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.id = `opt_${format}`;
-      input.checked = state.selectedFormats.includes(format);
-      input.addEventListener("change", () => {
-        state.selectedFormats = input.checked
-          ? [...state.selectedFormats, format]
-          : state.selectedFormats.filter((item) => item !== format);
-        state.selectedFormats = FORMATS.filter((item) => state.selectedFormats.includes(item));
-        syncPreviewFormat(currentAccountSource().accounts);
-        persistPreferenceState();
-        renderFormatControls();
-        recomputeOutput();
-      });
-
-      const label = document.createElement("label");
-      label.className = "format-option-label";
-      label.htmlFor = `opt_${format}`;
-      const name = document.createElement("span");
-      name.className = "format-option-name";
-      name.textContent = FORMAT_LABELS[format];
-      const platforms = document.createElement("span");
-      platforms.className = "format-platforms";
-      for (const provider of formatProviders(format)) {
-        platforms.append(renderPlatformMark(provider));
-      }
-      label.append(name, platforms);
-
-      const option = document.createElement("div");
-      option.className = "format-option";
-      option.append(input, label);
-      if (format === "codexmanager") {
-        bindTooltip(option, text.codexManagerTooltip);
-      }
-      if (format === "codex") {
-        bindTooltip(option, text.codexTooltip);
-      }
-
-      if (input.checked && isMergedFormat(format) && state.outputTextMode === "json") {
-        option.append(renderFormatModeControl(format));
-      }
-      return option;
-    }),
-  );
-
-  const previewFormats = currentAccountSource().accounts.length === 0
-    ? []
-    : formats.filter((format) => state.selectedFormats.includes(format));
-  if (previewFormats.length === 0) {
-    els.previewTabsContainer.replaceChildren();
-    els.previewOutput.removeAttribute("aria-labelledby");
-  } else {
-    els.previewTabsContainer.replaceChildren(
-      ...previewFormats.map((format, index) => {
-        const tab = document.createElement("button");
-        tab.type = "button";
-        tab.className = "editor-tab";
-        tab.id = previewTabId(format);
-        tab.dataset.format = format;
-        tab.setAttribute("role", "tab");
-        tab.setAttribute("aria-selected", "false");
-        tab.setAttribute("aria-controls", "previewOutput");
-        tab.textContent = FORMAT_LABELS[format];
-        tab.addEventListener("click", () => {
-          state.previewFormat = format;
-          persistPreferenceState();
-          syncPreviewTabs();
-          recomputeOutput();
-        });
-        tab.addEventListener("keydown", (event) => {
-          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") {
-            return;
-          }
-          event.preventDefault();
-          const nextIndex = previewTabIndex(index, previewFormats.length, event.key);
-          state.previewFormat = previewFormats[nextIndex] ?? state.previewFormat;
-          persistPreferenceState();
-          syncPreviewTabs();
-          recomputeOutput();
-          const tabs = Array.from(els.previewTabsContainer.querySelectorAll<HTMLButtonElement>(".editor-tab"));
-          tabs[nextIndex]?.focus();
-        });
-        return tab;
-      }),
-    );
-    syncPreviewTabs();
-  }
-
-  const selectedVisibleCount = formats.filter((format) => state.selectedFormats.includes(format)).length;
-  els.selectAllFormats.checked = formats.length > 0 && selectedVisibleCount === formats.length;
-  els.selectAllFormats.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < formats.length;
-}
-
-function visibleFormats(): OutputFormat[] {
-  return applicableFormats(currentAccountSource().accounts);
-}
-
-function applicableFormats(accounts: NormalizedAccount[]): OutputFormat[] {
-  if (accounts.length === 0) {
-    return FORMATS;
-  }
-  return FORMATS.filter((format) => accounts.some((account) => formatSupportsProvider(format, account.provider)));
-}
-
-function currentEffectiveFormats(accounts: NormalizedAccount[]): OutputFormat[] {
-  return effectiveFormats(state.selectedFormats, applicableFormats(accounts));
-}
-
-function formatSupportsProvider(format: OutputFormat, provider: NormalizedAccount["provider"]): boolean {
-  if (format === "cpa" || format === "sub2api") {
-    return provider === "openai" || provider === "xai";
-  }
-  return format === "grok" ? provider === "xai" : provider === "openai";
-}
-
-function formatProviders(format: OutputFormat): NormalizedAccount["provider"][] {
-  if (format === "cpa" || format === "sub2api") {
-    return ["openai", "xai"];
-  }
-  return format === "grok" ? ["xai"] : ["openai"];
-}
-
-function renderPlatformMark(provider: NormalizedAccount["provider"]): HTMLSpanElement {
-  const mark = document.createElement("span");
-  mark.className = `platform-mark platform-mark-${provider}`;
-  mark.setAttribute("aria-label", provider === "xai" ? "Grok" : "OpenAI");
-  mark.title = provider === "xai" ? "Grok" : "OpenAI";
-  mark.innerHTML = provider === "xai"
-    ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.234 10.162 22.977 0h-2.072l-7.591 8.824L7.251 0H.258l9.168 13.343L.258 24H2.33l8.016-9.318L16.749 24h6.993zm-2.837 3.299-.929-1.329L3.076 1.56h3.182l5.965 8.532.929 1.329 7.754 11.09h-3.182z"/></svg>`
-    : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>`;
-  return mark;
-}
-
-function recompute(): void {
-  state.draftParsed = state.draftSource ? parseSource(state.draftSource) : undefined;
-
-  const draft = draftAccounts();
-  const activeSource = currentAccountSource();
-  syncPreviewFormat(activeSource.accounts);
-  refreshSerializedPreview(activeSource.accounts);
-
-  renderInputError();
-  renderInputFormatIndicator();
-  renderFormatControls();
-  renderOutputHeader(activeSource);
-  renderPreview();
-  renderAccountTable(state.accounts, draft, activeSource.kind);
-}
-
-function recomputeOutput(): void {
-  const activeSource = currentAccountSource();
-  syncPreviewFormat(activeSource.accounts);
-  refreshSerializedPreview(activeSource.accounts);
-  renderOutputHeader(activeSource);
-  renderPreview();
-  syncAccountRowsPreviewability(activeSource);
-}
-
-function parseSource(source: JsonSource, options: { forceAutoInputFormat?: boolean } = {}): ParsedSource {
-  try {
-    const text = webMessages();
-    const parsedInput = parseInputPayloadWithMeta(source.text, { locale: state.locale });
-    const input = parsedInput.value;
-    const inputFormat = options.forceAutoInputFormat ? undefined : selectedInputFormat();
-    const detectedInputFormat = parsedInput.documentCount > 1 ? "unknown" : detectInputFormat(input);
-    const result = normalizeInput(input, {
-      sourceName: source.name,
-      sourcePath: source.path,
-    }, {
-      ...(inputFormat ? { inputFormat } : {}),
-      locale: state.locale,
+  els.previewOutput.addEventListener("click", (event) => {
+    const trigger = jwtHoverTrigger(event.target);
+    if (!trigger) return;
+    void showJwt(trigger).then((shown) => {
+      if (shown) jwtPopoverPinned = true;
     });
-
-    if (inputFormat && result.accounts.length === 0) {
-      return {
-        source,
-        accounts: [],
-        documentCount: parsedInput.documentCount,
-        inputFormat: result.inputFormat,
-        detectedInputFormat,
-        error: text.inputInvalidFormat(inputFormatLabel(inputFormat, state.locale)),
-        errorKind: "input",
-      };
-    }
-
-    return {
-      source,
-      accounts: result.accounts,
-      documentCount: parsedInput.documentCount,
-      inputFormat: result.inputFormat,
-      detectedInputFormat,
-    };
-  } catch (error) {
-    return {
-      source,
-      accounts: [],
-      documentCount: 0,
-      error: error instanceof Error ? error.message : String(error),
-      errorKind: "json",
-    };
-  }
-}
-
-function renderInputError(): void {
-  const text = webMessages();
-  const errors = [...state.sourceErrors];
-  if (state.draftParsed?.error) {
-    errors.push(
-      state.draftParsed.errorKind === "input"
-        ? state.draftParsed.error
-        : text.jsonParseFailed(state.draftParsed.error),
-    );
-  }
-  if (errors.length === 0 && state.draftSource && draftAccounts().length === 0) {
-    errors.push(text.noAccounts);
-  }
-
-  if (errors.length === 0) {
-    els.inputError.hidden = true;
-    els.inputError.replaceChildren();
-    return;
-  }
-
-  els.inputError.hidden = false;
-  els.inputError.replaceChildren(
-    ...errors.map((error) => {
-      const item = document.createElement("div");
-      item.textContent = error;
-      return item;
-    }),
-  );
-}
-
-function renderInputFormatIndicator(): void {
-  const text = webMessages();
-  const parsed = state.draftParsed;
-  const keepVisibleForForcedFormat = state.forcedInputFormat !== "auto" && Boolean(state.draftSource);
-  if (!parsed || (parsed.errorKind === "json" && !keepVisibleForForcedFormat)) {
-    els.inputFormatContainer.hidden = true;
-    return;
-  }
-
-  const hasAccounts = parsed.accounts.length > 0;
-  if (!hasAccounts && !keepVisibleForForcedFormat) {
-    els.inputFormatContainer.hidden = true;
-    return;
-  }
-
-  const multiDocument = parsed.documentCount > 1;
-  const naturalFormat = parsed.detectedInputFormat ?? "unknown";
-
-  if (!multiDocument && naturalFormat === "unknown" && state.forcedInputFormat === "auto" && hasAccounts) {
-    els.inputFormatContainer.hidden = true;
-    return;
-  }
-
-  els.inputFormatContainer.hidden = false;
-
-  const autoLabel = multiDocument
-    ? text.inputFormatAutoMixed
-    : text.inputFormatAuto(inputFormatLabel(naturalFormat, state.locale));
-
-  // Re-render select options dynamically to keep current best estimates in focus
-  const currentValue = state.forcedInputFormat;
-  els.inputFormatSelect.replaceChildren();
-
-  const autoOption = document.createElement("option");
-  autoOption.value = "auto";
-  autoOption.textContent = autoLabel;
-  autoOption.selected = currentValue === "auto";
-  els.inputFormatSelect.append(autoOption);
-
-  SELECTABLE_INPUT_FORMATS.forEach((fmt) => {
-    const opt = document.createElement("option");
-    opt.value = fmt;
-    opt.textContent = inputFormatLabel(fmt, state.locale);
-    opt.selected = currentValue === fmt;
-    els.inputFormatSelect.append(opt);
   });
-}
-
-function renderSourceBadge(format: InputFormat | undefined): HTMLSpanElement | null {
-  if (!format || format === "unknown") {
-    return null;
-  }
-  const badge = document.createElement("span");
-  badge.className = `badge-format badge-${format}`;
-  badge.textContent = INPUT_FORMAT_BADGE_LABELS[format];
-  return badge;
-}
-
-function renderOutputHeader(activeSource: ReturnType<typeof activeAccountSource>): void {
-  const text = webMessages();
-  const activeFormats = currentEffectiveFormats(activeSource.accounts);
-  const exportAccounts = filterAccountsForFormats(activeSource.accounts, activeFormats);
-  const exportCount = exportAccounts.length;
-  const canExport = canExportCurrentPlan(exportAccounts, activeFormats);
-  const zip = canExport && willDownloadZip(exportCount, activeFormats);
-  const fileTypeLabel = state.outputTextMode === "jsonl" ? "JSONL" : "JSON";
-  const parts = [];
-  if (exportCount > 0) {
-    parts.push(text.accountCount(exportCount));
-  }
-  if (canExport) {
-    parts.push(activeFormats.length === 1 ? FORMAT_LABELS[activeFormats[0]] : text.formatCount(activeFormats.length));
-    parts.push(zip ? "ZIP" : fileTypeLabel);
-  }
-  els.outputMeta.textContent = parts.join(" · ");
-  const draft = draftAccounts();
-  els.addDraftButton.disabled = draft.length === 0 || Boolean(state.draftParsed?.error);
-  els.copyButton.disabled = !currentPreviewFile();
-  els.downloadButton.disabled = !canExport || state.downloadBusy;
-  els.downloadBtnText.textContent = state.downloadBusy
-    ? text.exportPreparing
-    : canExport
-      ? text.exportAccounts(exportCount)
-      : text.downloadDefault;
-  els.downloadButton.removeAttribute("title");
-  els.downloadButton.setAttribute("aria-label", downloadButtonLabel(canExport, exportCount, zip));
-  renderTextModeControl();
-
-  // Show/Hide Clear Accounts Button
-  if (state.accounts.length === 0) {
-    els.clearAccountsButton.hidden = true;
-  } else {
-    els.clearAccountsButton.hidden = false;
-  }
-}
-
-function renderPreview(): void {
-  const text = webMessages();
-  const file = currentPreviewFile();
-  els.previewOutput.classList.toggle("is-empty", !file);
-  hideJwtPopover();
-  const filePathFooter = document.getElementById("previewFilePath");
-  const fileTypeFooter = document.getElementById("previewFileType");
-  if (!file) {
-    if (filePathFooter) {
-      filePathFooter.textContent = "";
-    }
-    if (fileTypeFooter) {
-      fileTypeFooter.textContent = `${state.outputTextMode.toUpperCase()} | UTF-8`;
-    }
-    els.previewOutput.textContent = currentEffectiveFormats(currentAccountSource().accounts).length === 0
-      ? text.previewNoFormat
-      : text.previewNoInput;
-    return;
-  }
-  if (filePathFooter) {
-    filePathFooter.textContent = file.path;
-  }
-  if (fileTypeFooter) {
-    fileTypeFooter.textContent = `${state.outputTextMode.toUpperCase()} | UTF-8`;
-  }
-  els.previewOutput.innerHTML = highlightJson(file.text);
-}
-
-function syncPreviewTabs(): void {
-  syncPreviewTabSelection(els.previewTabsContainer.querySelectorAll<HTMLElement>(".editor-tab"), state.previewFormat);
-  const activeTab = els.previewTabsContainer.querySelector<HTMLElement>(".editor-tab.active");
-  if (activeTab?.id) {
-    els.previewOutput.setAttribute("aria-labelledby", activeTab.id);
-  } else {
-    els.previewOutput.removeAttribute("aria-labelledby");
-  }
-}
-
-function renderAccountTable(accounts: NormalizedAccount[], draft: NormalizedAccount[], activeKind: AccountSourceKind): void {
-  const text = webMessages();
-  if (accounts.length === 0 && draft.length === 0) {
-    els.accountSection.hidden = true;
-    els.accountRows.replaceChildren();
-    return;
-  }
-
-  els.accountSection.hidden = false;
-  const activeCount = activeKind === "draft" ? draft.length : accounts.length;
-  const previewable = canSelectPreviewAccount(activeCount);
-  els.accountSection.classList.toggle("is-previewable", previewable);
-  els.accountRows.replaceChildren(
-    ...accounts.map((account, index) => {
-      const rowPreviewable = activeKind === "loaded" && previewable;
-      const row = document.createElement("div");
-      row.className = "account-row";
-      row.classList.toggle("is-selectable", rowPreviewable);
-      row.tabIndex = rowPreviewable ? 0 : -1;
-      row.setAttribute("data-account-index", String(index));
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
-
-      // Special rendering for first cell (Account Name)
-      const labelCell = document.createElement("span");
-      labelCell.className = "account-cell account-identity-cell";
-      labelCell.dataset.label = text.accountCellAccount;
-
-      const idxSpan = document.createElement("span");
-      idxSpan.className = "account-cell-index";
-      idxSpan.textContent = `${index + 1}. `;
-
-      const valSpan = document.createElement("span");
-      valSpan.className = "account-cell-value";
-      setAccountIdentityText(valSpan, account);
-      bindTooltip(labelCell, accountLabel(account));
-
-      labelCell.append(idxSpan, valSpan);
-
-      const sourceBadge = renderSourceBadge(account.inputFormat);
-      if (sourceBadge) {
-        labelCell.append(sourceBadge);
-      }
-
-      const cells: HTMLElement[] = [
-        labelCell,
-        accountPlanCell(account),
-        accountExpiryCell(account),
-        accountActionCell(account, index),
-      ];
-      row.append(...cells);
-      return row;
-    }),
-    ...draft.map((account, index) => {
-      const rowPreviewable = activeKind === "draft" && previewable;
-      const row = document.createElement("div");
-      row.className = "account-row is-draft";
-      row.classList.toggle("is-selectable", rowPreviewable);
-      row.tabIndex = rowPreviewable ? 0 : -1;
-      row.setAttribute("data-draft-index", String(index));
-      row.setAttribute("role", "option");
-      row.setAttribute("aria-selected", String(rowPreviewable && index === state.selectedAccountIndex));
-      row.setAttribute("aria-label", text.accountLabelPrefixDraft(accountLabel(account)));
-
-      // Special rendering for Draft row first cell
-      const labelCell = document.createElement("span");
-      labelCell.className = "account-cell account-identity-cell";
-      labelCell.dataset.label = text.accountCellAccount;
-
-      const valSpan = document.createElement("span");
-      valSpan.className = "account-cell-value";
-      setAccountIdentityText(valSpan, account);
-      bindTooltip(labelCell, accountLabel(account));
-
-      labelCell.append(valSpan);
-
-      const sourceBadge = renderSourceBadge(account.inputFormat);
-      if (sourceBadge) {
-        labelCell.append(sourceBadge);
-      }
-
-      const cells: HTMLElement[] = [
-        labelCell,
-        accountPlanCell(account),
-        accountExpiryCell(account),
-        emptyActionCell(),
-      ];
-      row.append(...cells);
-      return row;
-    }),
-  );
-}
-
-function selectPreviewAccount(index: number): void {
-  const activeSource = currentAccountSource();
-  if (!canSelectPreviewAccount(activeSource.accounts.length)) {
-    return;
-  }
-  const boundedIndex = Math.min(Math.max(index, 0), activeSource.accounts.length - 1);
-  if (boundedIndex === state.selectedAccountIndex) {
-    return;
-  }
-  const previousIndex = state.selectedAccountIndex;
-  state.selectedAccountIndex = boundedIndex;
-  state.serializedFiles = buildSerializedPreviewFiles(activeSource.accounts);
-  renderPreview();
-  setAccountRowSelected(activeSource.kind, previousIndex, false);
-  setAccountRowSelected(activeSource.kind, boundedIndex, true);
-}
-
-function addDraftAccounts(): void {
-  const textMessages = webMessages();
-  const text = els.jsonInput.value.trim();
-  if (!text) {
-    return;
-  }
-  const sourceIndex = state.nextInputIndex;
-  const parsed = parseSource({
-    name: textMessages.sourceName(sourceIndex),
-    path: `input-${sourceIndex}`,
-    text,
-  });
-  if (parsed.error || parsed.accounts.length === 0) {
-    state.draftParsed = parsed;
-    recompute();
-    return;
-  }
-  const beforeCount = state.accounts.length;
-  state.accounts.push(...parsed.accounts);
-  const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
-  state.accounts = dedupeResult.accounts;
-  const summary = importSummary(parsed.accounts.length, beforeCount, state.accounts.length);
-  state.nextInputIndex += 1;
-  state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
-  els.jsonInput.value = "";
-  clearFileInputs();
-  state.draftSource = undefined;
-  state.draftParsed = undefined;
-  state.sourceErrors = [];
-  triggerLogoSparkle();
-  showToast(textMessages.sourceImported(summary.processed, summary.added, summary.merged));
-  recompute();
-}
-
-function removeAccount(index: number): void {
-  state.accounts.splice(index, 1);
-  state.selectedAccountIndex = selectedIndexAfterRemoval(state.selectedAccountIndex, index, state.accounts.length);
-  recompute();
-}
-
-function draftAccounts(): NormalizedAccount[] {
-  return state.draftParsed?.accounts ?? [];
-}
-
-function currentAccountSource(): ReturnType<typeof activeAccountSource> {
-  return activeAccountSource(state.accounts, draftAccounts());
-}
-
-function currentOutputModes(): OutputModes {
-  return effectiveWebOutputModes(state.outputModes, state.outputTextMode);
-}
-
-function refreshSerializedPreview(accounts: NormalizedAccount[]): void {
-  if (state.selectedAccountIndex >= accounts.length) {
-    state.selectedAccountIndex = Math.max(accounts.length - 1, 0);
-  }
-  state.serializedFiles = buildSerializedPreviewFiles(accounts);
-}
-
-function syncPreviewFormat(accounts: NormalizedAccount[]): void {
-  const formats = currentEffectiveFormats(accounts);
-  if (!formats.includes(state.previewFormat)) {
-    state.previewFormat = formats[0] ?? "cpa";
-  }
-}
-
-function buildSerializedOutputFiles(accounts: NormalizedAccount[], formats: OutputFormat[]): SerializedOutputFile[] {
-  if (accounts.length === 0 || formats.length === 0) {
-    return [];
-  }
-  return serializeOutputFiles(
-    buildOutputPlan(accounts, formats, {
-      outputModes: currentOutputModes(),
-      allowSyntheticIdToken: state.allowSyntheticIdToken,
-      includeRefreshToken: state.includeRefreshToken,
-    }),
-    state.outputTextMode,
-  );
-}
-
-function buildSerializedPreviewFiles(accounts: NormalizedAccount[]): SerializedOutputFile[] {
-  if (!currentEffectiveFormats(accounts).includes(state.previewFormat) || accounts.length === 0) {
-    return [];
-  }
-  const boundedIndex = Math.min(state.selectedAccountIndex, accounts.length - 1);
-  const previewAccounts = canSelectPreviewAccount(accounts.length)
-    ? accounts.slice(boundedIndex, boundedIndex + 1)
-    : accounts;
-  return buildSerializedOutputFiles(previewAccounts, [state.previewFormat]);
-}
-
-function selectedInputFormat(): InputFormat | undefined {
-  return state.forcedInputFormat === "auto" || state.forcedInputFormat === "unknown"
-    ? undefined
-    : state.forcedInputFormat;
-}
-
-function currentPreviewFile(): SerializedOutputFile | undefined {
-  return state.serializedFiles[0];
-}
-
-function canSelectPreviewAccount(accountCount: number): boolean {
-  return accountCount > 1 && isPreviewFormatPerAccount(state.previewFormat);
-}
-
-function isPreviewFormatPerAccount(format: OutputFormat): boolean {
-  if (!currentEffectiveFormats(currentAccountSource().accounts).includes(format)) {
-    return false;
-  }
-  if (state.outputTextMode === "jsonl") {
-    return true;
-  }
-  return !isMergedFormat(format) || currentOutputModes()[format] === "single";
-}
-
-function accountEventRow(target: EventTarget | null): HTMLElement | undefined {
-  if (!(target instanceof HTMLElement)) {
-    return undefined;
-  }
-  const row = target.closest<HTMLElement>(".account-row.is-selectable");
-  return row && els.accountRows.contains(row) ? row : undefined;
-}
-
-function accountRemoveButton(target: EventTarget | null): HTMLButtonElement | undefined {
-  if (!(target instanceof HTMLElement)) {
-    return undefined;
-  }
-  const button = target.closest<HTMLButtonElement>(".remove-account-button");
-  return button && els.accountRows.contains(button) ? button : undefined;
-}
-
-function accountRemoveIndex(button: HTMLButtonElement): number | undefined {
-  const rawIndex = button.dataset.removeAccountIndex;
-  if (rawIndex === undefined) {
-    return undefined;
-  }
-  const index = Number(rawIndex);
-  return Number.isInteger(index) && index >= 0 ? index : undefined;
-}
-
-function accountRowIndex(row: HTMLElement): number | undefined {
-  const rawIndex = row.dataset.accountIndex ?? row.dataset.draftIndex;
-  if (rawIndex === undefined) {
-    return undefined;
-  }
-  const index = Number(rawIndex);
-  return Number.isInteger(index) && index >= 0 ? index : undefined;
-}
-
-function setAccountRowSelected(kind: AccountSourceKind, index: number, selected: boolean): void {
-  if (kind !== "loaded" && kind !== "draft") {
-    return;
-  }
-  const attribute = kind === "loaded" ? "data-account-index" : "data-draft-index";
-  const row = els.accountRows.querySelector<HTMLElement>(`[${attribute}="${index}"]`);
-  row?.setAttribute("aria-selected", String(selected));
-}
-
-function scrollDraftIntoAccountView(): void {
-  requestAnimationFrame(() => {
-    const row = els.accountRows.querySelector<HTMLElement>("[data-draft-index=\"0\"]");
-    if (!row) {
-      return;
-    }
-    scrollElementIntoContainer(row, els.accountRows);
-  });
-}
-
-function scrollElementIntoContainer(element: HTMLElement, container: HTMLElement): void {
-  const elementRect = element.getBoundingClientRect();
-  const containerRect = container.getBoundingClientRect();
-  if (elementRect.top < containerRect.top) {
-    container.scrollTop -= containerRect.top - elementRect.top;
-  } else if (elementRect.bottom > containerRect.bottom) {
-    container.scrollTop += elementRect.bottom - containerRect.bottom;
-  }
-}
-
-function syncAccountRowsPreviewability(activeSource: ReturnType<typeof activeAccountSource>): void {
-  if (activeSource.kind === "empty") {
-    return;
-  }
-  const previewable = canSelectPreviewAccount(activeSource.accounts.length);
-  const previousPreviewable = els.accountSection.classList.contains("is-previewable");
-  if (previewable === previousPreviewable) {
-    return;
-  }
-
-  els.accountSection.classList.toggle("is-previewable", previewable);
-  syncAccountRowsByKind("loaded", activeSource.kind === "loaded" && previewable);
-  syncAccountRowsByKind("draft", activeSource.kind === "draft" && previewable);
-}
-
-function syncAccountRowsByKind(kind: Exclude<AccountSourceKind, "empty">, selectable: boolean): void {
-  const selector = kind === "loaded" ? "[data-account-index]" : "[data-draft-index]";
-  const rows = els.accountRows.querySelectorAll<HTMLElement>(selector);
-  rows.forEach((row) => {
-    const index = accountRowIndex(row);
-    row.classList.toggle("is-selectable", selectable);
-    row.tabIndex = selectable ? 0 : -1;
-    row.setAttribute("aria-selected", String(selectable && index === state.selectedAccountIndex));
-  });
-}
-
-async function readFiles(fileList: FileList | null): Promise<void> {
-  try {
-    const allFiles = Array.from(fileList ?? []);
-    await readSources(await fileSourcesFromFiles(allFiles), allFiles.length);
-  } catch (error) {
-    reportFileReadError(error);
-  }
-}
-
-async function readDroppedData(dataTransfer: DataTransfer | null): Promise<void> {
-  try {
-    const droppedSources = await fileSourcesFromDataTransfer(dataTransfer);
-    if (droppedSources) {
-      await readSources(droppedSources.sources, droppedSources.itemCount);
-      return;
-    }
-    await readFiles(dataTransfer?.files ?? null);
-  } catch (error) {
-    reportFileReadError(error);
-  }
-}
-
-async function chooseDirectory(): Promise<void> {
-  const picker = (window as WindowWithDirectoryPicker).showDirectoryPicker;
-  if (!picker) {
-    return;
-  }
-  try {
-    const directory = await picker.call(window);
-    await readSources(await fileSourcesFromFileSystemHandle(directory), 1);
-  } catch (error) {
-    if (isAbortError(error)) {
-      return;
-    }
-    reportFileReadError(error);
-  }
-}
-
-async function readSources(sources: JsonSource[], itemCount: number): Promise<void> {
-  const text = webMessages();
-  if (itemCount > 0 && sources.length === 0) {
-    state.sourceErrors = [text.chooseJsonFile];
-    clearFileInputs();
-    recompute();
-    return;
-  }
-  const parsed = sources.map((source) => parseSource(source, { forceAutoInputFormat: true }));
-  const nextAccounts = parsed.flatMap((item) => item.accounts);
-  if (nextAccounts.length > 0) {
-    const beforeCount = state.accounts.length;
-    state.accounts.push(...nextAccounts);
-    const dedupeResult = dedupeAccountsWithAffectedIndex(state.accounts, beforeCount);
-    state.accounts = dedupeResult.accounts;
-    state.selectedAccountIndex = dedupeResult.affectedIndex ?? 0;
-    const summary = importSummary(nextAccounts.length, beforeCount, state.accounts.length);
-    triggerLogoSparkle();
-    showToast(text.fileImported(summary.processed, summary.added, summary.merged));
-  }
-  state.sourceErrors = parsed
-    .filter((item) => item.error || item.accounts.length === 0)
-    .map((item) => {
-      if (!item.error) {
-        return text.fileNoAccounts(item.source.name);
-      }
-      return item.errorKind === "input"
-        ? text.fileInvalidInput(item.source.name, item.error)
-        : text.fileJsonFailed(item.source.name, item.error);
-    });
-  clearFileInputs();
-  recompute();
-}
-
-async function fileSourcesFromFiles(files: File[]): Promise<JsonSource[]> {
-  const importFiles = files
-    .map((file) => ({ file, path: filePath(file) }))
-    .filter((item) => isCredentialImportPath(item.path))
-    .sort((left, right) => left.path.localeCompare(right.path));
-
-  const sourceGroups = await Promise.all(
-    importFiles.map(({ file, path }) => fileSourcesFromFile(file, path)),
-  );
-  return sourceGroups.flat();
-}
-
-async function fileSourcesFromDataTransfer(dataTransfer: DataTransfer | null): Promise<{ sources: JsonSource[]; itemCount: number } | undefined> {
-  const items = Array.from(dataTransfer?.items ?? []);
-  const handlePromises = items.map(droppedFileSystemHandle);
-  const handles = (await Promise.all(handlePromises)).filter((handle): handle is FileSystemHandleLike => Boolean(handle));
-  if (handles.length > 0) {
-    const sourceGroups = await Promise.all(handles.map((handle) => fileSourcesFromFileSystemHandle(handle)));
-    const sources = sourceGroups.flat().sort((left, right) => left.path.localeCompare(right.path));
-    return {
-      sources,
-      itemCount: items.length,
-    };
-  }
-
-  const entries = items
-    .map(droppedEntry)
-    .filter((entry): entry is FileSystemEntryLike => Boolean(entry));
-
-  if (entries.length === 0) {
-    return undefined;
-  }
-
-  try {
-    const sourceGroups = await Promise.all(entries.map((entry) => fileSourcesFromEntry(entry)));
-    const sources = sourceGroups.flat().sort((left, right) => left.path.localeCompare(right.path));
-    return {
-      sources,
-      itemCount: items.length,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function droppedFileSystemHandle(item: DataTransferItem): Promise<FileSystemHandleLike | undefined> {
-  return (item as DataTransferItemWithFileSystemHandle).getAsFileSystemHandle?.()
-    .then((handle) => handle ?? undefined)
-    .catch(() => undefined) ?? Promise.resolve(undefined);
-}
-
-async function fileSourcesFromFileSystemHandle(handle: FileSystemHandleLike, basePath = handle.name): Promise<JsonSource[]> {
-  if (handle.kind === "file") {
-    const path = normalizeDroppedPath(basePath || handle.name);
-    if (!isCredentialImportPath(path)) {
-      return [];
-    }
-    const file = await handle.getFile();
-    return fileSourcesFromFile(file, path);
-  }
-
-  const sourceGroups: JsonSource[][] = [];
-  for await (const child of fileSystemDirectoryChildren(handle)) {
-    sourceGroups.push(await fileSourcesFromFileSystemHandle(child, `${basePath}/${child.name}`));
-  }
-  return sourceGroups.flat();
-}
-
-async function* fileSystemDirectoryChildren(handle: FileSystemDirectoryHandleLike): AsyncIterable<FileSystemHandleLike> {
-  if (handle.values) {
-    for await (const child of handle.values()) {
-      yield child;
-    }
-    return;
-  }
-  if (handle.entries) {
-    for await (const [, child] of handle.entries()) {
-      yield child;
-    }
-  }
-}
-
-function droppedEntry(item: DataTransferItem): FileSystemEntryLike | undefined {
-  const entry = (item as DataTransferItemWithEntry).webkitGetAsEntry?.();
-  return entry ? entry as FileSystemEntryLike : undefined;
-}
-
-async function fileSourcesFromEntry(entry: FileSystemEntryLike): Promise<JsonSource[]> {
-  if (entry.isFile) {
-    const fileEntry = entry as FileSystemFileEntryLike;
-    const entryPath = normalizeDroppedPath(entry.fullPath || entry.name);
-    if (!isCredentialImportPath(entryPath)) {
-      return [];
-    }
-    const file = await fileFromEntry(fileEntry);
-    const path = entryPath || filePath(file);
-    if (!isCredentialImportPath(path)) {
-      return [];
-    }
-    return fileSourcesFromFile(file, path);
-  }
-
-  if (!entry.isDirectory) {
-    return [];
-  }
-
-  const directoryEntry = entry as FileSystemDirectoryEntryLike;
-  const entries = await readDirectoryEntries(directoryEntry);
-  const sourceGroups = await Promise.all(entries.map((child) => fileSourcesFromEntry(child)));
-  return sourceGroups.flat();
-}
-
-function fileFromEntry(entry: FileSystemFileEntryLike): Promise<File> {
-  return new Promise((resolve, reject) => {
-    entry.file(resolve, reject);
-  });
-}
-
-function readDirectoryEntries(entry: FileSystemDirectoryEntryLike): Promise<FileSystemEntryLike[]> {
-  const reader = entry.createReader();
-  const entries: FileSystemEntryLike[] = [];
-
-  return new Promise((resolve, reject) => {
-    const readNextBatch = () => {
-      reader.readEntries((batch) => {
-        if (batch.length === 0) {
-          resolve(entries);
-          return;
-        }
-        entries.push(...batch);
-        readNextBatch();
-      }, reject);
-    };
-    readNextBatch();
-  });
-}
-
-function filePath(file: File): string {
-  const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-  return normalizeDroppedPath(relativePath || file.name);
-}
-
-function clearFileInputs(): void {
-  els.fileInput.value = "";
-}
-
-function reportFileReadError(error: unknown): void {
-  state.sourceErrors = [webMessages().fileReadFailed(errorMessage(error))];
-  clearFileInputs();
-  recompute();
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
-}
-
-function normalizeDroppedPath(value: string): string {
-  return value.replace(/^\/+/, "") || "input.json";
-}
-
-async function fileSourcesFromFile(file: File, path: string): Promise<JsonSource[]> {
-  if (isZipCredentialPath(path)) {
-    return extractZipJsonSources(path, new Uint8Array(await file.arrayBuffer()));
-  }
-  if (isJsonCredentialPath(path)) {
-    return [{
-      name: path,
-      path,
-      text: await file.text(),
-    }];
-  }
-  return [];
-}
-
-function canChooseDirectory(): boolean {
-  return typeof (window as WindowWithDirectoryPicker).showDirectoryPicker === "function";
-}
-
-async function copyPreview(): Promise<void> {
-  const text = webMessages();
-  const file = currentPreviewFile();
-  if (!file) {
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(file.text);
-    const copyTextSpan = document.getElementById("copyBtnText");
-    const copyIconSvg = document.getElementById("copyIcon");
-    if (copyTextSpan) {
-      copyTextSpan.textContent = text.copied;
-    }
-    copyIconSvg?.toggleAttribute("hidden", true);
-    els.copyButton.classList.add("btn-copy-success");
-    showToast(text.copyToast);
-    window.clearTimeout(copyResetTimer);
-    copyResetTimer = window.setTimeout(() => {
-      if (copyTextSpan) {
-        copyTextSpan.textContent = webMessages().copyPreview;
-      }
-      copyIconSvg?.toggleAttribute("hidden", false);
-      els.copyButton.classList.remove("btn-copy-success");
-    }, 1500);
-  } catch {
-    showToast(text.copyFailed);
-  }
-}
-
-async function downloadCurrentPlan(): Promise<void> {
-  const text = webMessages();
-  const activeSource = currentAccountSource();
-  const formats = currentEffectiveFormats(activeSource.accounts);
-  const exportAccounts = filterAccountsForFormats(activeSource.accounts, formats);
-  if (state.downloadBusy || !canExportCurrentPlan(exportAccounts, formats)) {
-    return;
-  }
-
-  const zip = willDownloadZip(exportAccounts.length, formats);
-  if (zip) {
-    state.downloadBusy = true;
-    renderOutputHeader(activeSource);
+  els.jwtPopover.addEventListener("mouseenter", cancelJwtPopoverHide);
+  els.jwtPopover.addEventListener("mouseleave", scheduleJwtPopoverHide);
+  els.jwtPopoverCopy.addEventListener("click", async () => {
+    const body = els.jwtPopoverBody.textContent;
+    if (!body) return;
     try {
-      await nextAnimationFrame();
-      const serializedFiles = buildSerializedOutputFiles(exportAccounts, formats);
-      const bytes = zipOutputFiles(serializedFiles);
-      const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const name = zipDownloadName(exportAccounts);
-      downloadBlob(new Blob([payload], { type: "application/zip" }), name);
-      showToast(text.exportZipToast(name));
-    } finally {
-      state.downloadBusy = false;
-      renderOutputHeader(activeSource);
+      await navigator.clipboard.writeText(body);
+      showJwtCopySuccessFeedback();
+    } catch {
+      showToast(webMessages().copyFailed);
     }
-    return;
-  }
-
-  const file = buildSerializedOutputFiles(exportAccounts, formats)[0];
-  if (!file) {
-    return;
-  }
-  downloadBlob(new Blob([file.text], { type: outputMimeType() }), file.path.split("/").pop() ?? outputFallbackName());
-  showToast(text.exportFileToast);
-}
-
-function nextAnimationFrame(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => resolve());
   });
-}
-
-function downloadBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-}
-
-function renderFormatModeControl(format: OutputFormat): HTMLSpanElement {
-  const text = webMessages();
-  const mode = state.outputModes[format] ?? "merged";
-  const control = document.createElement("span");
-  control.className = "format-mode-control";
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "format-mode-button";
-  button.textContent = mode === "single" ? text.modeSingle : text.modeMerged;
-  const tip = mode === "single" ? text.modeSingleTip : text.modeMergedTip;
-  button.setAttribute(
-    "aria-label",
-    text.modeAria(FORMAT_LABELS[format], button.textContent, tip, text.nextModeLabel(mode)),
-  );
-  bindTooltip(button, tip);
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const nextMode = nextOutputMode(mode);
-    state.outputModes = {
-      ...state.outputModes,
-      [format]: nextMode,
-    };
-    persistPreferenceState();
-    renderFormatControls();
-    recomputeOutput();
+  document.addEventListener("click", (event) => {
+    if (jwtPopoverPinned && !els.jwtPopover.contains(event.target as Node) && !jwtHoverTrigger(event.target)) {
+      hideJwt();
+    }
   });
-
-  control.append(button);
-  return control;
-}
-
-function createTooltip(): HTMLDivElement {
-  const element = document.createElement("div");
-  element.id = "appTooltip";
-  element.className = "app-tooltip";
-  element.setAttribute("role", "tooltip");
-  element.hidden = true;
-  document.body.append(element);
-  window.addEventListener("scroll", hideTooltip, true);
-  window.addEventListener("resize", hideTooltip);
-  return element;
-}
-
-function bindTooltip(target: HTMLElement, text: string): void {
-  target.dataset.tooltip = text;
-  if (tooltipTargets.has(target)) {
-    return;
-  }
-  tooltipTargets.add(target);
-  target.setAttribute("aria-describedby", "appTooltip");
-  target.addEventListener("mouseenter", () => showTooltip(target, target.dataset.tooltip ?? ""));
-  target.addEventListener("mouseleave", hideTooltip);
-  target.addEventListener("focusin", () => showTooltip(target, target.dataset.tooltip ?? ""));
-  target.addEventListener("focusout", hideTooltip);
-}
-
-function showTooltip(target: HTMLElement, text: string): void {
-  if (!text) {
-    return;
-  }
-  tooltip.textContent = text;
-  tooltip.hidden = false;
-  const rect = target.getBoundingClientRect();
-  const tooltipRect = tooltip.getBoundingClientRect();
-  const viewportPadding = 8;
-  const top = rect.bottom + tooltipRect.height + 14 <= window.innerHeight
-    ? rect.bottom + 8
-    : Math.max(viewportPadding, rect.top - tooltipRect.height - 8);
-  const left = Math.min(
-    Math.max(viewportPadding, rect.left + rect.width / 2 - tooltipRect.width / 2),
-    window.innerWidth - tooltipRect.width - viewportPadding,
-  );
-  tooltip.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
-}
-
-function hideTooltip(): void {
-  tooltip.hidden = true;
-}
-
-function nextOutputMode(mode: OutputMode): OutputMode {
-  return mode === "single" ? "merged" : "single";
-}
-
-function previewTabIndex(currentIndex: number, count: number, key: string): number {
-  if (key === "Home") {
-    return 0;
-  }
-  if (key === "End") {
-    return count - 1;
-  }
-  if (key === "ArrowLeft") {
-    return (currentIndex - 1 + count) % count;
-  }
-  return (currentIndex + 1) % count;
-}
-
-function accountLabel(account: NormalizedAccount): string {
-  return account.email ?? account.name ?? account.chatgptAccountId ?? account.accountId ?? account.userId ?? webMessages().accountLabelFallback;
-}
-
-function setAccountIdentityText(element: HTMLElement, account: NormalizedAccount): void {
-  const label = accountLabel(account);
-  const accountId = account.accountId ?? account.chatgptAccountId;
-
-  element.textContent = "";
-  const mainSpan = document.createElement("span");
-  mainSpan.className = "account-identity-main";
-  mainSpan.textContent = label;
-  element.append(mainSpan);
-
-  if (accountId) {
-    const subSpan = document.createElement("span");
-    subSpan.className = "account-identity-sub";
-    subSpan.textContent = accountId;
-    element.append(subSpan);
-    element.setAttribute("aria-label", `${label} (${accountId})`);
-  } else {
-    element.setAttribute("aria-label", label);
-  }
-}
-
-function displayExpiresAt(value: string | undefined): string {
-  if (!value) {
-    return webMessages().unknown;
-  }
-  return displayCredentialExpiry(value, state.locale);
-}
-
-function accountCell(label: string, value: string, title?: string): HTMLSpanElement {
-  const cell = document.createElement("span");
-  cell.className = "account-cell";
-  cell.dataset.label = label;
-  cell.textContent = value;
-  cell.setAttribute("title", title ?? value);
-  if (title && title !== value) {
-    cell.setAttribute("aria-label", `${label}: ${title}`);
-  }
-  return cell;
-}
-
-function accountExpiryCell(account: NormalizedAccount): HTMLSpanElement {
-  const text = webMessages();
-  const value = displayExpiresAt(account.expiresAt);
-  const cell = accountCell(text.expiresAt, value, account.expiresAt);
-  cell.classList.add("account-expiry-cell");
-  cell.classList.toggle("is-expired", isExpiredCredential(account.expiresAt));
-  return cell;
-}
-
-function accountPlanCell(account: NormalizedAccount): HTMLSpanElement {
-  const text = webMessages();
-  const cell = document.createElement("span");
-  cell.className = "account-cell account-plan-cell";
-  cell.dataset.label = text.planType;
-
-  if (account.provider !== "unknown") {
-    const badge = renderPlatformMark(account.provider);
-    badge.style.marginRight = "6px";
-    badge.style.flexShrink = "0";
-    cell.append(badge);
-  }
-
-  const planVal = account.planType?.trim();
-  const isUnknown = !planVal || planVal === "unknown" || planVal === text.unknown;
-  if (!isUnknown) {
-    const planSpan = document.createElement("span");
-    planSpan.textContent = planVal;
-    cell.append(planSpan);
-  }
-
-  return cell;
-}
-
-function accountActionCell(account: NormalizedAccount, index: number): HTMLSpanElement {
-  const text = webMessages();
-  const cell = document.createElement("span");
-  cell.className = "account-actions";
-  cell.dataset.label = text.action;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "remove-account-button";
-  button.textContent = text.remove;
-  button.dataset.removeAccountIndex = String(index);
-  button.setAttribute("aria-label", text.removeAccount(accountLabel(account)));
-  cell.append(button);
-  return cell;
-}
-
-function emptyActionCell(): HTMLSpanElement {
-  const cell = document.createElement("span");
-  cell.className = "account-actions is-empty";
-  cell.dataset.label = webMessages().action;
-  cell.setAttribute("aria-hidden", "true");
-  return cell;
-}
-
-
-function downloadButtonLabel(canExport: boolean, accountCount: number, zip: boolean): string {
-  if (!canExport) {
-    return webMessages().downloadDefault;
-  }
-  return webMessages().exportAria(accountCount, state.outputTextMode === "jsonl", zip);
-}
-
-function outputMimeType(): string {
-  return state.outputTextMode === "jsonl" ? "application/x-ndjson" : "application/json";
-}
-
-function outputFallbackName(): string {
-  return state.outputTextMode === "jsonl" ? "authconv.jsonl" : "authconv.json";
-}
-
-function canExportCurrentPlan(
-  accounts: readonly NormalizedAccount[],
-  formats: readonly OutputFormat[],
-): boolean {
-  return formats.length > 0 && accounts.length > 0;
-}
-
-function willDownloadZip(accountCount: number, formats: readonly OutputFormat[]): boolean {
-  if (accountCount <= 0 || formats.length === 0) {
-    return false;
-  }
-  if (formats.length > 1) {
-    return true;
-  }
-  if (state.outputTextMode === "jsonl") {
-    return false;
-  }
-  const format = formats[0];
-  if (isMergedFormat(format) && currentOutputModes()[format] !== "single") {
-    return false;
-  }
-  return accountCount > 1;
-}
-
-function renderTextModeControl(): void {
-  els.jsonlToggle.checked = state.outputTextMode === "jsonl";
-  els.jsonlToggle.setAttribute("aria-checked", String(els.jsonlToggle.checked));
-}
-
-function highlightJson(text: string): string {
-  return escapeHtml(text).replace(
-    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
-    (match) => {
-      let className = "json-number";
-      if (match.startsWith('"')) {
-        className = match.endsWith(":") ? "json-key" : "json-string";
-      } else if (match === "true" || match === "false") {
-        className = "json-boolean";
-      } else if (match === "null") {
-        className = "json-null";
-      }
-      if (className === "json-string" && match.startsWith('"') && match.endsWith('"')) {
-        const token = match.slice(1, -1);
-        if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(token) && jwtPopoverText(token)) {
-          return `"<span class="json-string jwt-token-hoverable" data-jwt="${token}" tabindex="0" aria-label="${escapeHtml(webMessages().jwtHoverAria)}">${token}</span>"`;
-        }
-      }
-      if (className === "json-key") {
-        return `<span class="${className}">${match.slice(0, -1)}</span>:`;
-      }
-      return `<span class="${className}">${match}</span>`;
-    },
-  );
+  window.addEventListener("scroll", (event) => {
+    if (event.target instanceof HTMLElement && els.jwtPopover.contains(event.target)) return;
+    hideJwt();
+  }, true);
 }
 
 function jwtHoverTrigger(target: EventTarget | null): HTMLElement | undefined {
-  return target instanceof HTMLElement
+  return target instanceof Element
     ? target.closest<HTMLElement>(".jwt-token-hoverable") ?? undefined
     : undefined;
 }
 
 function scheduleJwtPopover(trigger: HTMLElement): void {
-  window.clearTimeout(jwtPopoverShowTimer);
+  window.clearTimeout(jwtTimer);
   cancelJwtPopoverHide();
-  jwtPopoverShowTimer = window.setTimeout(() => showJwtPopover(trigger), 250);
+  jwtTimer = window.setTimeout(() => void showJwt(trigger), 250);
 }
 
-function showJwtPopover(trigger: HTMLElement): void {
-  window.clearTimeout(jwtPopoverShowTimer);
-  cancelJwtPopoverHide();
+function cancelJwtPopoverHide(): void {
+  window.clearTimeout(jwtPopoverHideTimer);
+}
+
+function scheduleJwtPopoverHide(): void {
+  if (jwtPopoverPinned) return;
+  window.clearTimeout(jwtTimer);
+  window.clearTimeout(jwtPopoverHideTimer);
+  jwtPopoverHideTimer = window.setTimeout(hideJwt, 800);
+}
+
+async function showJwt(trigger: HTMLElement): Promise<boolean> {
   const token = trigger.dataset.jwt;
-  const preview = token ? jwtPopoverText(token) : undefined;
-  if (!preview) {
-    return;
-  }
+  if (!token) return false;
+  const request = ++jwtRequest;
+  const response = await client.decodeJwt(token);
+  if (
+    request !== jwtRequest ||
+    !trigger.isConnected ||
+    trigger.dataset.jwt !== token ||
+    response.type !== "decodeJwtResult" ||
+    !response.text
+  ) return false;
   jwtPopoverTrigger?.removeAttribute("aria-describedby");
   jwtPopoverTrigger = trigger;
   trigger.setAttribute("aria-describedby", "jwtPopover");
-  els.jwtPopoverBody.innerHTML = highlightJson(preview);
+  els.jwtPopoverBody.innerHTML = highlightJson(response.text);
   els.jwtPopover.hidden = false;
-  positionJwtPopover(trigger);
-  requestAnimationFrame(() => els.jwtPopover.classList.add("visible"));
+  requestAnimationFrame(() => {
+    els.jwtPopover.classList.add("visible");
+    positionJwtPopover(trigger);
+  });
+  return true;
 }
 
 function positionJwtPopover(trigger: HTMLElement): void {
-  const gap = 8;
-  const viewportPadding = 8;
   const triggerRect = trigger.getBoundingClientRect();
   const popoverRect = els.jwtPopover.getBoundingClientRect();
+  const viewportPadding = 12;
+  const gap = 8;
   const maxLeft = Math.max(viewportPadding, window.innerWidth - popoverRect.width - viewportPadding);
   const left = Math.min(Math.max(triggerRect.left, viewportPadding), maxLeft);
   const below = triggerRect.bottom + gap;
@@ -2100,112 +1008,175 @@ function positionJwtPopover(trigger: HTMLElement): void {
   els.jwtPopover.style.top = `${Math.round(top)}px`;
 }
 
-function cancelJwtPopoverHide(): void {
+function hideJwt(): void {
+  jwtRequest += 1;
+  window.clearTimeout(jwtTimer);
   window.clearTimeout(jwtPopoverHideTimer);
-}
-
-function scheduleJwtPopoverHide(): void {
-  if (jwtPopoverPinned) {
-    return;
-  }
-  window.clearTimeout(jwtPopoverShowTimer);
-  window.clearTimeout(jwtPopoverHideTimer);
-  jwtPopoverHideTimer = window.setTimeout(hideJwtPopover, 800);
-}
-
-function hideJwtPopover(): void {
-  window.clearTimeout(jwtPopoverShowTimer);
-  window.clearTimeout(jwtPopoverHideTimer);
+  jwtPopoverPinned = false;
   els.jwtPopover.classList.remove("visible");
   jwtPopoverTrigger?.removeAttribute("aria-describedby");
   jwtPopoverTrigger = undefined;
-  jwtPopoverPinned = false;
-
-  // Reset copy button feedback
-  const copyBtn = els.jwtPopoverCopy;
-  copyBtn.classList.remove("copied");
-  const copyIcon = copyBtn.querySelector(".copy-icon") as HTMLElement | null;
-  const checkIcon = copyBtn.querySelector(".check-icon") as HTMLElement | null;
-  if (copyIcon && checkIcon) {
-    copyIcon.style.display = "block";
-    checkIcon.style.display = "none";
-  }
-
+  resetJwtCopyFeedback();
   window.setTimeout(() => {
-    if (!els.jwtPopover.classList.contains("visible")) {
-      els.jwtPopover.hidden = true;
-    }
+    if (!els.jwtPopover.classList.contains("visible")) els.jwtPopover.hidden = true;
   }, 160);
 }
 
-function showCopySuccessFeedback(): void {
-  const copyBtn = els.jwtPopoverCopy;
-  const copyIcon = copyBtn.querySelector(".copy-icon") as HTMLElement | null;
-  const checkIcon = copyBtn.querySelector(".check-icon") as HTMLElement | null;
-  if (!copyIcon || !checkIcon) {
-    return;
+async function copyPreview(): Promise<void> {
+  if (!state.previewText) return;
+  try {
+    await navigator.clipboard.writeText(state.previewText);
+    showPreviewCopySuccessFeedback();
+    showToast(webMessages().copyToast);
+  } catch {
+    showToast(webMessages().copyFailed);
   }
-  copyBtn.classList.add("copied");
-  copyIcon.style.display = "none";
-  checkIcon.style.display = "block";
-  window.setTimeout(() => {
-    copyBtn.classList.remove("copied");
-    copyIcon.style.display = "block";
-    checkIcon.style.display = "none";
-  }, 1200);
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+function showPreviewCopySuccessFeedback(): void {
+  window.clearTimeout(copySuccessTimer);
+  const label = document.getElementById("copyBtnText");
+  const icon = document.getElementById("copyIcon");
+  if (label) label.textContent = webMessages().copied;
+  icon?.toggleAttribute("hidden", true);
+  els.copyButton.classList.add("btn-copy-success");
+  copySuccessTimer = window.setTimeout(() => {
+    if (label) label.textContent = webMessages().copyPreview;
+    icon?.toggleAttribute("hidden", false);
+    els.copyButton.classList.remove("btn-copy-success");
+  }, 1500);
 }
 
-function showToast(message: string): void {
-  window.clearTimeout(toastTimer);
-  els.toastMessage.textContent = message;
-  els.toast.hidden = false;
-  requestAnimationFrame(() => {
-    els.toast.classList.add("show");
-  });
-  toastTimer = window.setTimeout(() => {
-    els.toast.classList.remove("show");
-    toastTimer = window.setTimeout(() => {
-      els.toast.hidden = true;
-    }, 360);
-  }, 2200);
+function showJwtCopySuccessFeedback(): void {
+  window.clearTimeout(jwtCopySuccessTimer);
+  const copyIcon = els.jwtPopoverCopy.querySelector<HTMLElement>(".copy-icon");
+  const checkIcon = els.jwtPopoverCopy.querySelector<HTMLElement>(".check-icon");
+  els.jwtPopoverCopy.classList.add("copied");
+  if (copyIcon) copyIcon.style.display = "none";
+  if (checkIcon) checkIcon.style.display = "block";
+  jwtCopySuccessTimer = window.setTimeout(resetJwtCopyFeedback, 1200);
 }
 
-function triggerLogoSparkle(): void {
-  els.logoIcon.classList.remove("sparkle");
-  void els.logoIcon.offsetWidth;
-  els.logoIcon.classList.add("sparkle");
+function resetJwtCopyFeedback(): void {
+  window.clearTimeout(jwtCopySuccessTimer);
+  els.jwtPopoverCopy.classList.remove("copied");
+  const copyIcon = els.jwtPopoverCopy.querySelector<HTMLElement>(".copy-icon");
+  const checkIcon = els.jwtPopoverCopy.querySelector<HTMLElement>(".check-icon");
+  if (copyIcon) copyIcon.style.display = "block";
+  if (checkIcon) checkIcon.style.display = "none";
 }
 
-function setThemeExpanded(expanded: boolean): void {
-  const themeControl = document.querySelector(".theme-control");
-  const themeTrigger = document.getElementById("themeToggleTrigger");
-  themeControl?.classList.toggle("expanded", expanded);
-  themeTrigger?.setAttribute("aria-expanded", String(expanded));
-  document.querySelectorAll<HTMLButtonElement>(".theme-tab").forEach((tab) => {
-    tab.tabIndex = expanded ? 0 : -1;
-  });
+function filesFromList(list: FileList | null): WorkerFile[] {
+  return Array.from(list ?? []).map((file) => ({ file, path: filePath(file) }));
 }
 
-function setLanguageExpanded(expanded: boolean): void {
-  const langControl = document.querySelector(".language-control");
-  const langTrigger = document.getElementById("languageToggleTrigger");
-  langControl?.classList.toggle("expanded", expanded);
-  langTrigger?.setAttribute("aria-expanded", String(expanded));
-  document.querySelectorAll<HTMLButtonElement>(".language-tab").forEach((tab) => {
-    tab.tabIndex = expanded ? 0 : -1;
-  });
+async function chooseDirectory(): Promise<void> {
+  try {
+    const directory = await (window as WindowWithDirectoryPicker).showDirectoryPicker?.();
+    if (directory) await importCollectedFiles((signal) => filesFromHandle(directory, directory.name, signal));
+  } catch (error) {
+    if (!isAbortError(error)) showError(error);
+  }
+}
+
+async function filesFromDrop(data: DataTransfer | null, signal: AbortSignal): Promise<WorkerFile[]> {
+  throwIfAborted(signal);
+  const items = Array.from(data?.items ?? []);
+  const handles = (await Promise.all(items.map(async (item) => {
+    throwIfAborted(signal);
+    try { return await (item as DataTransferItemWithHandle).getAsFileSystemHandle?.() ?? undefined; }
+    catch { return undefined; }
+  }))).filter((handle): handle is FileSystemHandleLike => Boolean(handle));
+  if (handles.length > 0) {
+    const files: WorkerFile[] = [];
+    for (const handle of handles) {
+      for (const file of await filesFromHandle(handle, handle.name, signal)) files.push(file);
+    }
+    return files;
+  }
+  const entries = items
+    .map((item) => (item as unknown as DataTransferItemWithEntry).webkitGetAsEntry?.() as unknown as FileSystemEntryLike | undefined)
+    .filter((entry): entry is FileSystemEntryLike => Boolean(entry));
+  if (entries.length > 0) {
+    const files: WorkerFile[] = [];
+    for (const entry of entries) {
+      for (const file of await filesFromEntry(entry, signal)) files.push(file);
+    }
+    return files;
+  }
+  throwIfAborted(signal);
+  return filesFromList(data?.files ?? null);
+}
+
+async function filesFromHandle(handle: FileSystemHandleLike, base: string, signal: AbortSignal): Promise<WorkerFile[]> {
+  throwIfAborted(signal);
+  if (handle.kind === "file") {
+    const file = await handle.getFile();
+    throwIfAborted(signal);
+    return [{ file, path: normalizePath(base) }];
+  }
+  const files: WorkerFile[] = [];
+  if (handle.values) {
+    for await (const child of handle.values()) {
+      throwIfAborted(signal);
+      for (const file of await filesFromHandle(child, `${base}/${child.name}`, signal)) files.push(file);
+    }
+  } else if (handle.entries) {
+    for await (const [, child] of handle.entries()) {
+      throwIfAborted(signal);
+      for (const file of await filesFromHandle(child, `${base}/${child.name}`, signal)) files.push(file);
+    }
+  }
+  return files;
+}
+
+async function filesFromEntry(entry: FileSystemEntryLike, signal: AbortSignal): Promise<WorkerFile[]> {
+  throwIfAborted(signal);
+  if (entry.isFile) {
+    const path = normalizePath(entry.fullPath ?? entry.name);
+    const file = await new Promise<File>((resolve, reject) => (entry as FileEntryLike).file(resolve, reject));
+    throwIfAborted(signal);
+    return [{ file, path }];
+  }
+  if (!entry.isDirectory) return [];
+  const reader = (entry as DirectoryEntryLike).createReader();
+  const children: FileSystemEntryLike[] = [];
+  for (;;) {
+    throwIfAborted(signal);
+    const batch = await new Promise<FileSystemEntryLike[]>((resolve, reject) => reader.readEntries(resolve, reject));
+    if (batch.length === 0) break;
+    for (const child of batch) children.push(child);
+  }
+  const files: WorkerFile[] = [];
+  for (const child of children) {
+    for (const file of await filesFromEntry(child, signal)) files.push(file);
+  }
+  return files;
+}
+
+function onWindowDragEnter(event: DragEvent): void {
+  if (!hasFileDrag(event)) return;
+  event.preventDefault();
+  dragDepth += 1;
+  showDragOverlay();
+}
+
+function onWindowDragOver(event: DragEvent): void {
+  if (!hasFileDrag(event)) return;
+  event.preventDefault();
+  showDragOverlay();
+}
+
+function onWindowDragLeave(event: DragEvent): void {
+  if (!hasFileDrag(event) && !els.dragOverlay.classList.contains("active")) return;
+  if (event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) dragDepth = 0;
+  else dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) hideDragOverlay();
 }
 
 function showDragOverlay(): void {
   els.dragOverlay.classList.add("active");
-  els.dragOverlay.setAttribute("aria-hidden", "true");
+  els.dragOverlay.setAttribute("aria-hidden", "false");
 }
 
 function hideDragOverlay(): void {
@@ -2215,82 +1186,64 @@ function hideDragOverlay(): void {
 }
 
 function hasFileDrag(event: DragEvent): boolean {
-  const types = event.dataTransfer?.types;
-  if (!types) {
-    return false;
-  }
-  for (let index = 0; index < types.length; index += 1) {
-    if (types[index] === "Files") {
-      return true;
-    }
-  }
-  return false;
+  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
 
-function isInsideDropZone(event: DragEvent): boolean {
-  return event.target instanceof Node && els.dropZone.contains(event.target);
+function filePath(file: File): string {
+  return normalizePath((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name);
 }
 
-function isLeavingWindow(event: DragEvent): boolean {
-  const nextTarget = event.relatedTarget;
-  if (nextTarget instanceof Node) {
-    return false;
-  }
-  return event.clientX <= 0
-    || event.clientY <= 0
-    || event.clientX >= window.innerWidth
-    || event.clientY >= window.innerHeight;
+function normalizePath(value: string): string {
+  return value.replace(/^\/+/, "").replace(/\\/g, "/");
 }
 
-function applyTheme(): void {
-  const theme = state.themeMode === "system" ? (systemDarkQuery.matches ? "dark" : "light") : state.themeMode;
-  document.documentElement.dataset.theme = theme;
-
-  // Active state highlighting for segmented controls
-  document.querySelectorAll(".theme-tab").forEach((tab) => {
-    const active = tab.getAttribute("data-value") === state.themeMode;
-    tab.classList.toggle("active", active);
-    tab.setAttribute("aria-pressed", String(active));
-  });
-
-  // Dynamically swap the SVG sun or moon icon based on the active actual theme
-  const iconContainer = document.getElementById("themeIconContainer");
-  if (iconContainer) {
-    if (theme === "dark") {
-      iconContainer.innerHTML = `<svg class="theme-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>`;
-    } else {
-      iconContainer.innerHTML = `<svg class="theme-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="4.22" x2="19.78" y2="5.64"></line></svg>`;
-    }
-  }
+function downloadBlob(blob: Blob, name: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function previewTabId(format: OutputFormat): string {
-  return `preview-tab-${format}`;
+function showToast(message: string): void {
+  window.clearTimeout(toastTimer);
+  els.toastMessage.textContent = message;
+  els.toast.hidden = false;
+  requestAnimationFrame(() => els.toast.classList.add("show"));
+  toastTimer = window.setTimeout(() => {
+    els.toast.classList.remove("show");
+    window.setTimeout(() => { els.toast.hidden = true; }, 360);
+  }, 2200);
 }
 
-function isThemeMode(value: string): value is ThemeMode {
-  return value === "system" || value === "light" || value === "dark";
+function showError(error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  state.transientError = message;
+  view.renderInputState();
 }
 
-function isOutputTextMode(value: string | undefined): value is OutputTextMode {
-  return value === "json" || value === "jsonl";
+function applyErrorSummary(error: unknown): void {
+  const summary = (error as WorkerRequestError | undefined)?.summary;
+  if (summary) applySummary(summary);
 }
 
-function isMergedFormat(format: OutputFormat): boolean {
-  return MODE_FORMATS.has(format);
+function handleWorkerError(error: unknown): void {
+  applyErrorSummary(error);
+  if (!isAbortError(error)) showError(error);
 }
 
-function setText(id: string, text: string): void {
-  const element = document.getElementById(id);
-  if (element) {
-    element.textContent = text;
-  }
+function webMessages(): ReturnType<typeof messagesFor>["web"] {
+  return messagesFor(state.locale).web;
 }
 
-function byId<T extends HTMLElement = HTMLElement>(id: string): T {
-  const element = document.getElementById(id);
-  if (!element) {
-    throw new Error(`缺少页面节点: ${id}`);
-  }
-  return element as T;
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
 }

@@ -58,6 +58,8 @@ describe("dist checks", () => {
       function browserPreferenceStorage() {
         return globalThis.localStorage;
       }
+      const pending = new Map();
+      pending.clear();
     `;
     expect(checkDistHtml(html, rules)).toEqual([]);
   });

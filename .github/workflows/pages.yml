@@ -27,14 +27,8 @@ jobs:
       - uses: actions/configure-pages@v6
       - name: Install
         run: npm ci
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Test
-        run: npm test
-      - name: Build committed dist
-        run: npm run build
-      - name: Check dist
-        run: npm run check:dist
+      - name: Verify
+        run: npm run verify
       - name: Verify committed dist
         run: git diff --exit-code -- dist/index.html dist/cli.mjs
       - name: Build pages dist

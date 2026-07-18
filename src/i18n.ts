@@ -76,6 +76,7 @@ export const FORMAT_LABELS: Record<OutputFormat, string> = {
   codexmanager: "Codex Manager",
   codex: "Codex Auth",
   grok: "Grok CLI",
+  grok2api: "Grok2API",
 };
 
 function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
@@ -100,7 +101,6 @@ type CliMessages = {
     missingFlagValue: (flag: string) => string;
     noInputFiles: (inputPath: string) => string;
     notFileOrDirectory: (inputPath: string) => string;
-    unsupportedInputFile: (inputPath: string) => string;
     stdoutSingleFile: string;
     zipStdoutConflict: string;
     inspectTargetConflict: string;
@@ -125,17 +125,7 @@ type CliMessages = {
     missingValue: string;
     dryRun: (accountCount: number, fileCount: number, outputRoot: string) => string;
     fileLine: (path: string, accountCount: number) => string;
-    warning: string;
-    groupedWarnings: (message: string, sources: string[]) => string;
   };
-};
-
-type NormalizeMessages = {
-  invalidInputFormat: (sourceName: string, inputFormat: string) => string;
-  noTokens: (sourceName: string) => string;
-  invalidExpiry: (sourceName: string, value: string) => string;
-  claimOverride: (sourceName: string, fields: string[]) => string;
-  claimSanity: (sourceName: string, fields: string[]) => string;
 };
 
 type WebMessages = {
@@ -172,7 +162,9 @@ type WebMessages = {
   jsonlFormat: string;
   fakeId: string;
   refreshToken: string;
+  verifyToken: string;
   accountTitle: string;
+  draftAccountTitle: string;
   clearAccounts: string;
   accountColumns: [string, string, string, string];
   accountListAria: string;
@@ -189,9 +181,9 @@ type WebMessages = {
   jsonParseFailed: (error: string) => string;
   noAccounts: string;
   sourceName: (index: number) => string;
-  sourceImported: (processed: number, added: number, merged: number) => string;
-  fileImported: (processed: number, added: number, merged: number) => string;
-  chooseJsonFile: string;
+  sourceImported: (processed: number, added: number, merged: number, skippedForged: number) => string;
+  fileImported: (processed: number, added: number, merged: number, skippedForged: number) => string;
+  chooseCredentialFiles: string;
   fileNoAccounts: (name: string) => string;
   fileInvalidInput: (name: string, error: string) => string;
   fileJsonFailed: (name: string, error: string) => string;
@@ -215,7 +207,7 @@ type WebMessages = {
   jsonlTooltip: string;
   fakeIdTooltip: string;
   refreshTokenTooltip: string;
-  codexManagerTooltip: string;
+  verifyTokenTooltip: string;
   codexTooltip: string;
   modeSingle: string;
   modeMerged: string;
@@ -229,7 +221,6 @@ type WebMessages = {
 
 type Messages = {
   cli: CliMessages;
-  normalize: NormalizeMessages;
   web: WebMessages;
 };
 
@@ -252,17 +243,18 @@ export const MESSAGES: Record<Locale, Messages> = {
   authconv --serve
 
 参数:
-  <path...>              输入 JSON/JSONL/ZIP 文件或目录路径，可传多个
-  -i, --input <path>     指定 JSON/JSONL/ZIP 文件或目录（可重复）
+  <path...>              输入凭据文件或目录路径，按内容识别，可传多个
+  -i, --input <path>     指定凭据文件或目录，按内容识别（可重复）
   --stdin                从标准输入读取（与 -i 互斥）
-  -f, --format <list>    输出格式，支持逗号分隔或重复传入；可用 cpa/sub2api/codex2api/codexmanager/codex/grok/all
-  --mode <fmt>=<m>       sub2api/codex2api/grok 输出方式：merged 或 single
+  -f, --format <list>    输出格式，支持逗号分隔或重复传入；可用 cpa/sub2api/codex2api/codexmanager/codex/grok/grok2api/all
+  --mode <fmt>=<m>       sub2api/codex2api 输出方式：merged 或 single
   -o, --out-dir <path>   输出目录，默认 output
   --jsonl                输出 JSONL 格式（每账号一行）
   --zip                  写入一个 ZIP 文件，压缩包内保留当前输出目录结构
   --stdout               单格式单文件输出到 stdout
   --no-fake-id           输出不包含合成 id_token（默认会输出）
   --no-refresh-token     输出不包含 refresh_token（默认会输出）
+  --no-verify-token      不验证 access token 真伪，按字段直接转换
   --lang <zh|en>         人类可读输出语言，未检测到时默认英文
   --inspect              只打印账号摘要，不产出文件
   --dry-run              只打印写入计划，不实际写盘
@@ -281,14 +273,13 @@ export const MESSAGES: Record<Locale, Messages> = {
         missingInput: "未指定输入（需要 <path>、-i 或 --stdin）",
         invalidModeSyntax: (value) => `--mode 格式错误: ${value}（应为 format=merged|single）`,
         unknownOutputFormat: (format) => `未知输出格式: ${format}`,
-        unsupportedModeFormat: (format) => `--mode 仅支持 sub2api、codex2api 或 grok: ${format}`,
+        unsupportedModeFormat: (format) => `--mode 仅支持 sub2api 或 codex2api: ${format}`,
         unknownOutputMode: (mode) => `--mode 包含未知输出方式: ${mode}`,
         stdinConflict: (source) => `${source} 与 --stdin 冲突，只能指定一个输入来源`,
         stdinPathConflict: "--stdin 与已有输入路径冲突，只能指定一个输入来源",
         missingFlagValue: (flag) => `${flag} 缺少参数值`,
         noInputFiles: (inputPath) => `${inputPath}: 未找到输入文件`,
         notFileOrDirectory: (inputPath) => `${inputPath}: 不是文件或目录`,
-        unsupportedInputFile: (inputPath) => `${inputPath}: 不支持的输入文件类型（仅支持 .json、.jsonl、.zip）`,
         stdoutSingleFile: "--stdout 只支持单格式输出，且该格式只能生成一个文件",
         zipStdoutConflict: "--zip 与 --stdout 互斥",
         inspectTargetConflict: "--inspect 与 -o/--out-dir/--stdout/--zip 互斥",
@@ -313,22 +304,13 @@ export const MESSAGES: Record<Locale, Messages> = {
         missingValue: "—",
         dryRun: (accountCount, fileCount, outputRoot) => `识别 ${accountCount} 个账号，将写入 ${fileCount} 个文件到 ${outputRoot}`,
         fileLine: (filePath, accountCount) => `- ${filePath} (${accountCount} 个账号)`,
-        warning: "warning",
-        groupedWarnings: (message, sources) => `${message} (${sources.length} 条 warning)`,
       },
-    },
-    normalize: {
-      invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: 输入不符合 ${inputFormat} 输入格式`,
-      noTokens: (sourceName) => `${sourceName}: 未找到可识别 token 字段`,
-      invalidExpiry: (sourceName, value) => `${sourceName}: 过期时间格式错误 ("${value}")`,
-      claimOverride: (sourceName, fields) => `${sourceName}: access_token claim 不一致，覆盖字段: ${fields.join(",")}`,
-      claimSanity: (sourceName, fields) => `${sourceName}: JWT claim 校验异常: ${fields.join(",")}`,
     },
     web: {
       pageTitle: "Auth Converter | OpenAI / Grok OAuth 凭证转换工具",
       appTitle: "Auth Converter",
       notice: "纯本地安全转换，所有运算在当前浏览器中完成。",
-      dragTitle: "释放以导入 JSON / JSONL / ZIP 凭据",
+      dragTitle: "释放以导入凭据文件",
       dragSub: "松开添加到列表",
       themeLabel: "主题",
       themeAria: "切换和选择主题",
@@ -355,9 +337,9 @@ export const MESSAGES: Record<Locale, Messages> = {
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "输入格式",
-      dropZoneAria: "选择或拖放 JSON、JSONL、ZIP 凭据文件或文件夹",
+      dropZoneAria: "选择或拖放凭据文件或文件夹，格式按内容识别",
       dropTitle: "导入凭据文件",
-      dropSub: ".json / .jsonl / .zip，支持文件夹拖入",
+      dropSub: "支持任意扩展名和文件夹，按内容识别",
       chooseFile: "选择文件",
       chooseFolder: "选择文件夹",
       outputTitle: "数据输出",
@@ -369,7 +351,9 @@ export const MESSAGES: Record<Locale, Messages> = {
       jsonlFormat: "JSONL 格式",
       fakeId: "合成 id_token",
       refreshToken: "包含 refresh_token",
+      verifyToken: "验证 token 真伪",
       accountTitle: "已加载账号",
+      draftAccountTitle: "待加入账号",
       clearAccounts: "清空列表",
       accountColumns: ["账号标识 (Email / ID)", "平台 / 套餐", "过期时间", "操作"],
       accountListAria: "账号列表",
@@ -386,9 +370,19 @@ export const MESSAGES: Record<Locale, Messages> = {
       jsonParseFailed: (error) => `JSON 解析失败：${error}`,
       noAccounts: "未识别到可转换账号。",
       sourceName: (index) => `输入 ${index}`,
-      sourceImported: (processed, added, merged) => `已读取 ${processed} 个账号，新增 ${added} 个，合并重复 ${merged} 个`,
-      fileImported: (processed, added, merged) => `已读取 ${processed} 个账号，新增 ${added} 个，合并重复 ${merged} 个`,
-      chooseJsonFile: "请选择 .json、.jsonl 或 .zip 文件。",
+      sourceImported: (processed, added, merged, skippedForged) => [
+        `读取 ${processed}`,
+        `新增 ${added}`,
+        merged > 0 ? `合并 ${merged}` : "",
+        skippedForged > 0 ? `跳过伪造 ${skippedForged}` : "",
+      ].filter(Boolean).join(" · "),
+      fileImported: (processed, added, merged, skippedForged) => [
+        `读取 ${processed}`,
+        `新增 ${added}`,
+        merged > 0 ? `合并 ${merged}` : "",
+        skippedForged > 0 ? `跳过伪造 ${skippedForged}` : "",
+      ].filter(Boolean).join(" · "),
+      chooseCredentialFiles: "请选择凭据文件。",
       fileNoAccounts: (name) => `${name}: 未识别到可转换账号。`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON 解析失败（${name}）：${error}`,
@@ -403,7 +397,7 @@ export const MESSAGES: Record<Locale, Messages> = {
         zip ? "多格式或多文件会自动打包为 ZIP。" : "",
       ].filter(Boolean).join(" "),
       previewNoFormat: "选择导出格式后显示预览。",
-      previewNoInput: "输入 JSON 后显示当前格式预览。",
+      previewNoInput: "导入或粘贴凭据后显示预览。",
       accountLabelFallback: "未识别账号",
       accountLabelPrefixDraft: (label) => `草稿 ${label}`,
       accountCellAccount: "账号",
@@ -416,7 +410,7 @@ export const MESSAGES: Record<Locale, Messages> = {
       jsonlTooltip: "JSONL：行式 JSON 格式，每行一个账号（适合单行凭据导入等场景）。",
       fakeIdTooltip: "合成 id_token：针对缺少 id_token 的账号自动合成模拟凭据，以兼容 Codex Auth 等下游工具。",
       refreshTokenTooltip: "取消后，所有输出都会省略 refresh_token；凭证过期后将无法自动续期。",
-      codexManagerTooltip: "Codex-Manager 格式。",
+      verifyTokenTooltip: "使用内置 OpenAI / xAI 公钥离线验证 access token；文件导入会跳过伪造账号，粘贴草稿保留伪造标记并阻止输出；不可验证账号保留标记。关闭后按字段直接转换。",
       codexTooltip: "Codex auth.json 格式，可导入 Codex CLI、Cockpit 和 AxonHub 等兼容该格式的项目。",
       modeSingle: "单个",
       modeMerged: "聚合",
@@ -446,17 +440,18 @@ Usage:
   authconv --serve
 
 Options:
-  <path...>              Input JSON/JSONL/ZIP file or directory path; may repeat
-  -i, --input <path>     Input JSON/JSONL/ZIP file or directory path; may repeat
+  <path...>              Credential file or directory; detected by content; may repeat
+  -i, --input <path>     Credential file or directory; detected by content; may repeat
   --stdin                Read from standard input; conflicts with paths
-  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/grok/all
-  --mode <fmt>=<m>       sub2api/codex2api/grok output mode: merged or single
+  -f, --format <list>    Output formats, comma-separated or repeated; cpa/sub2api/codex2api/codexmanager/codex/grok/grok2api/all
+  --mode <fmt>=<m>       sub2api/codex2api output mode: merged or single
   -o, --out-dir <path>   Output directory, default output
   --jsonl                Output JSONL text, one JSON document per line
   --zip                  Write one ZIP file and keep the current output tree inside it
   --stdout               Write a single output file to stdout
   --no-fake-id           Omit synthetic id_token from output (included by default)
   --no-refresh-token     Omit refresh_token from output (included by default)
+  --no-verify-token      Skip access token verification and convert fields directly
   --lang <zh|en>         Human-readable output language, default en when undetected
   --inspect              Print account summary only
   --dry-run              Print write plan without writing files
@@ -475,14 +470,13 @@ Options:
         missingInput: "No input specified; pass <path>, -i, or --stdin",
         invalidModeSyntax: (value) => `Invalid --mode: ${value} (expected format=merged|single)`,
         unknownOutputFormat: (format) => `Unknown output format: ${format}`,
-        unsupportedModeFormat: (format) => `--mode only supports sub2api, codex2api, or grok: ${format}`,
+        unsupportedModeFormat: (format) => `--mode only supports sub2api or codex2api: ${format}`,
         unknownOutputMode: (mode) => `Unknown output mode in --mode: ${mode}`,
         stdinConflict: (source) => `${source} conflicts with --stdin; choose one input source`,
         stdinPathConflict: "--stdin conflicts with input paths; choose one input source",
         missingFlagValue: (flag) => `${flag} requires a value`,
         noInputFiles: (inputPath) => `${inputPath}: no input files found`,
         notFileOrDirectory: (inputPath) => `${inputPath}: not a file or directory`,
-        unsupportedInputFile: (inputPath) => `${inputPath}: unsupported input file type (expected .json, .jsonl, or .zip)`,
         stdoutSingleFile: "--stdout only supports one format that produces one file",
         zipStdoutConflict: "--zip conflicts with --stdout",
         inspectTargetConflict: "--inspect conflicts with -o/--out-dir/--stdout/--zip",
@@ -507,22 +501,13 @@ Options:
         missingValue: "-",
         dryRun: (accountCount, fileCount, outputRoot) => `Found ${plural(accountCount, "account")}, would write ${plural(fileCount, "file")} to ${outputRoot}`,
         fileLine: (filePath, accountCount) => `- ${filePath} (${plural(accountCount, "account")})`,
-        warning: "warning",
-        groupedWarnings: (message, sources) => `${message} (${plural(sources.length, "warning")})`,
       },
-    },
-    normalize: {
-      invalidInputFormat: (sourceName, inputFormat) => `${sourceName}: input is not ${inputFormat}`,
-      noTokens: (sourceName) => `${sourceName}: no recognizable token fields found`,
-      invalidExpiry: (sourceName, value) => `${sourceName}: invalid expiry time ("${value}")`,
-      claimOverride: (sourceName, fields) => `${sourceName}: access_token claim mismatch, overwritten fields: ${fields.join(",")}`,
-      claimSanity: (sourceName, fields) => `${sourceName}: invalid JWT claims: ${fields.join(",")}`,
     },
     web: {
       pageTitle: "Auth Converter | Local OpenAI / Grok OAuth credential converter",
       appTitle: "Auth Converter",
       notice: "Local-only conversion. Everything runs in this browser.",
-      dragTitle: "Drop to import JSON / JSONL / ZIP credentials",
+      dragTitle: "Drop to import credential files",
       dragSub: "Release to add to the list",
       themeLabel: "Theme",
       themeAria: "Switch and choose theme",
@@ -552,9 +537,9 @@ Example:
   "expires_at": "2026-07-03T01:00:00.000Z"
 }`,
       inputFormatAria: "Input format",
-      dropZoneAria: "Choose or drop JSON, JSONL, or ZIP credential files or folders",
-      dropTitle: "Choose or drop .json / .jsonl / .zip credential files",
-      dropSub: "Drop files or folders",
+      dropZoneAria: "Choose or drop credential files or folders; formats are detected by content",
+      dropTitle: "Choose or drop credential files",
+      dropSub: "Any extension or folder; detected by content",
       chooseFile: "Choose File",
       chooseFolder: "Choose Folder",
       outputTitle: "Output",
@@ -566,7 +551,9 @@ Example:
       jsonlFormat: "JSONL Format",
       fakeId: "Synthetic id_token",
       refreshToken: "Include refresh_token",
+      verifyToken: "Verify token authenticity",
       accountTitle: "Loaded Accounts",
+      draftAccountTitle: "Draft accounts",
       clearAccounts: "Clear List",
       accountColumns: ["Account (Email / ID)", "Platform / Plan", "Expires At", "Action"],
       accountListAria: "Account list",
@@ -583,9 +570,19 @@ Example:
       jsonParseFailed: (error) => `JSON parse failed: ${error}`,
       noAccounts: "No convertible accounts found.",
       sourceName: (index) => `Input ${index}`,
-      sourceImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
-      fileImported: (processed, added, merged) => `Read ${processed} account(s), added ${added}, merged ${merged} duplicate(s)`,
-      chooseJsonFile: "Choose .json, .jsonl, or .zip files.",
+      sourceImported: (processed, added, merged, skippedForged) => [
+        `Read ${processed}`,
+        `Added ${added}`,
+        merged > 0 ? `Merged ${merged}` : "",
+        skippedForged > 0 ? `Skipped forged ${skippedForged}` : "",
+      ].filter(Boolean).join(" · "),
+      fileImported: (processed, added, merged, skippedForged) => [
+        `Read ${processed}`,
+        `Added ${added}`,
+        merged > 0 ? `Merged ${merged}` : "",
+        skippedForged > 0 ? `Skipped forged ${skippedForged}` : "",
+      ].filter(Boolean).join(" · "),
+      chooseCredentialFiles: "Choose credential files.",
       fileNoAccounts: (name) => `${name}: no convertible accounts found.`,
       fileInvalidInput: (name, error) => `${name}: ${error}`,
       fileJsonFailed: (name, error) => `JSON parse failed (${name}): ${error}`,
@@ -600,7 +597,7 @@ Example:
         zip ? "Multiple formats or files will be packed as ZIP." : "",
       ].filter(Boolean).join(" "),
       previewNoFormat: "Select an output format to preview.",
-      previewNoInput: "Paste JSON to preview the selected format.",
+      previewNoInput: "Import or paste credentials to preview.",
       accountLabelFallback: "Unknown account",
       accountLabelPrefixDraft: (label) => `Draft ${label}`,
       accountCellAccount: "Account",
@@ -613,7 +610,7 @@ Example:
       jsonlTooltip: "JSONL: Line-by-line JSON format, one account per line (suitable for single-line credential imports).",
       fakeIdTooltip: "Synthetic id_token: Automatically generate a simulated token when missing, for compatibility with downstream tools like Codex Auth.",
       refreshTokenTooltip: "When disabled, every output omits refresh_token and credentials cannot refresh automatically after expiry.",
-      codexManagerTooltip: "Codex-Manager format.",
+      verifyTokenTooltip: "Verify access tokens offline with the bundled OpenAI / xAI public keys. File imports skip forged accounts; pasted drafts remain marked as forged and are blocked from output. Unverifiable accounts remain marked. Disable for field-only conversion.",
       codexTooltip: "Codex auth.json format; importable by Codex CLI, Cockpit, AxonHub, and other compatible tools.",
       modeSingle: "Single",
       modeMerged: "Merged",

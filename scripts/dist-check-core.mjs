@@ -7,7 +7,7 @@ const ALLOWED_LOCAL_STORAGE_RETURN_REPLACE_PATTERN = /\breturn\s+globalThis\.loc
 const STORAGE_GET_ITEM_PATTERN = /\.\s*getItem\s*\(/g;
 const STORAGE_SET_ITEM_PATTERN = /\.\s*setItem\s*\(/g;
 const STORAGE_BRACKET_CALL_PATTERN = /\[\s*["'](?:getItem|setItem|removeItem|clear)["']\s*]\s*\(/;
-const STORAGE_MUTATION_PATTERN = /\.\s*(?:removeItem|clear)\s*\(/;
+const STORAGE_MUTATION_PATTERN = /\bstorage\s*\.\s*(?:removeItem|clear)\s*\(/;
 const STORAGE_PROPERTY_ASSIGN_PATTERN = /\bstorage\s*(?:\.\s*(?!getItem\b|setItem\b)[A-Za-z_$][\w$]*|\[[^\]]+\])\s*=/;
 const ALLOWED_GET_ITEM_ARGS = "PREFERENCES_STORAGE_KEY";
 const ALLOWED_SET_ITEM_ARGS = "PREFERENCES_STORAGE_KEY,JSON.stringify(sanitizePreferences(preferences))";

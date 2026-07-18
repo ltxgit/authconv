@@ -1,6 +1,4 @@
-export const ALL_FORMATS = ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok"] as const;
-
-export type OutputFormat = (typeof ALL_FORMATS)[number];
+export type OutputFormat = "cpa" | "sub2api" | "codex2api" | "codexmanager" | "codex" | "grok" | "grok2api";
 
 export type OutputMode = "merged" | "single";
 
@@ -14,18 +12,44 @@ export type Provider = "openai" | "xai" | "unknown";
 
 export type Locale = "zh" | "en";
 
-export type NormalizedAccount = {
+export type TokenVerificationStatus = "verified" | "forged" | "unverifiable" | "unchecked";
+
+export type TokenVerificationReason =
+  | "signature_valid"
+  | "malformed_jwt"
+  | "algorithm_rejected"
+  | "signature_failed"
+  | "issuer_mismatch"
+  | "audience_mismatch"
+  | "token_type_mismatch"
+  | "missing_access_token"
+  | "opaque_access_token"
+  | "unknown_kid"
+  | "unknown_provider"
+  | "user_disabled"
+  | "verification_missing";
+
+export type TokenVerification = {
+  status: TokenVerificationStatus;
+  reason: TokenVerificationReason;
+  tokenField: "accessToken";
+  algorithm?: "RS256" | "ES256";
+  kid?: string;
+  notBeforeActive?: true;
+};
+
+export type TokenVerificationContext = {
   provider: Provider;
+  issuer?: string;
+  algorithm?: "RS256" | "ES256";
+  expectedAudience?: string;
+};
+
+export type NormalizedAccountCommon = {
   accessToken?: string;
   refreshToken?: string;
   idToken?: string;
-  idTokenSynthetic?: boolean;
   sessionToken?: string;
-  accountId?: string;
-  chatgptAccountId?: string;
-  chatgptUserId?: string;
-  chatgptAccountUserId?: string;
-  workspaceId?: string;
   userId?: string;
   issuer?: string;
   audience?: string[];
@@ -34,10 +58,29 @@ export type NormalizedAccount = {
   notBefore?: string;
   email?: string;
   name?: string;
-  planType?: string;
   lastRefresh?: string;
   expiresAt?: string;
   issuedAt?: string;
+  sourceName: string;
+  sourcePath: string;
+  inputFormat: InputFormat;
+  tokenVerification?: TokenVerification;
+  tokenVerificationContext?: TokenVerificationContext;
+};
+
+export type OpenAINormalizedAccount = NormalizedAccountCommon & {
+  provider: "openai";
+  idTokenSynthetic?: boolean;
+  accountId?: string;
+  chatgptAccountId?: string;
+  chatgptUserId?: string;
+  chatgptAccountUserId?: string;
+  workspaceId?: string;
+  planType?: string;
+};
+
+export type XaiNormalizedAccount = NormalizedAccountCommon & {
+  provider: "xai";
   tokenType?: string;
   expiresIn?: number;
   principalId?: string;
@@ -48,41 +91,39 @@ export type NormalizedAccount = {
   redirectUri?: string;
   headers?: Record<string, string>;
   disabled?: boolean;
+};
+
+export type UnknownNormalizedAccount = NormalizedAccountCommon & {
+  provider: "unknown";
+};
+
+export type NormalizedAccount = OpenAINormalizedAccount | XaiNormalizedAccount | UnknownNormalizedAccount;
+
+export type DiagnosticCode =
+  | "json_parse_failed"
+  | "zip_read_failed"
+  | "input_format_mismatch"
+  | "no_credential_tokens"
+  | "unsupported_input";
+
+export type IngestionDiagnostic = {
+  code: DiagnosticCode;
   sourceName: string;
   sourcePath: string;
-  warnings: string[];
-  inputFormat?: InputFormat;
+  line?: number;
+  detail?: string;
+};
+
+export type InputSource = {
+  name: string;
+  path: string;
+  chunks: AsyncIterable<Uint8Array>;
+  cancel?: (reason?: unknown) => void | Promise<void>;
 };
 
 export type NormalizeSource = {
   sourceName: string;
   sourcePath: string;
-};
-
-export type NormalizeOptions = {
-  inputFormat?: InputFormat;
-  locale?: Locale;
-};
-
-export type NormalizeResult = {
-  accounts: NormalizedAccount[];
-  warnings: string[];
-  rejections: string[];
-  inputFormat: InputFormat;
-};
-
-export type OutputFile = {
-  path: string;
-  format: OutputFormat;
-  content: unknown;
-  accountCount: number;
-};
-
-export type SerializedOutputFile = {
-  path: string;
-  format: OutputFormat;
-  text: string;
-  accountCount: number;
 };
 
 export type RenderOptions = {
@@ -91,9 +132,6 @@ export type RenderOptions = {
   includeRefreshToken?: boolean;
 };
 
-export type BuildOutputPlanOptions = RenderOptions & {
-  outputModes?: OutputModes;
-};
 
 export type CpaRenderedAccount = {
   type: "codex";
@@ -222,14 +260,3 @@ export type GrokRenderedAuth = Record<string, {
   oidc_issuer: "https://auth.x.ai";
   oidc_client_id: string;
 }>;
-
-export type RenderOutputByFormat = {
-  cpa: CpaRenderedAccount | CpaXaiRenderedAccount | Array<CpaRenderedAccount | CpaXaiRenderedAccount>;
-  codex2api: Codex2ApiRenderedAccount[];
-  sub2api: Sub2ApiRenderedData;
-  codexmanager: CodexManagerRenderedAccount | CodexManagerRenderedAccount[];
-  codex: CodexRenderedAuth | CodexRenderedAuth[];
-  grok: GrokRenderedAuth;
-};
-
-export type RenderedOutput = RenderOutputByFormat[OutputFormat];

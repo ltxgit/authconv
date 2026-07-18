@@ -1,1015 +1,390 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import {
-  buildOutputPlan,
-  detectInputFormat,
-  effectiveOutputModes,
-  filterAccountsForFormats,
-  normalizeInput,
-  parseInputPayload,
-  parseInputPayloadWithMeta,
-  parseFormatList,
-  renderFormat,
-  serializeOutputFiles,
-} from "../src/index.js";
-import { decodeJwtPayload } from "../src/jwt.js";
-import { fakeJwt } from "./helpers.js";
-
-async function readFixtureJson(relativePath: string): Promise<unknown> {
-  return JSON.parse(await readFile(new URL(`./fixtures/${relativePath}`, import.meta.url), "utf8")) as unknown;
-}
-
-async function normalizeChatGptSessionFixture() {
-  const input = await readFixtureJson("chatgpt-session.json");
-  return normalizeInput(input, {
-    sourceName: "chatgpt-session.json",
-    sourcePath: "tests/fixtures/chatgpt-session.json",
-  });
-}
-
-async function normalizeGrokOidcFixture() {
-  const input = await readFixtureJson("grok-oidc.json");
-  return normalizeInput(input, {
-    sourceName: "grok-oidc.json",
-    sourcePath: "tests/fixtures/grok-oidc.json",
-  });
-}
-
-describe("authconv core", () => {
-  it("normalizes an xAI OIDC token bundle without carrying device-flow state", () => {
-    const accessToken = fakeJwt({
-      iss: "https://auth.x.ai",
-      aud: "b1a00492-073a-47ea-816f-4c329264a828",
-      sub: "xai-user-1",
-      client_id: "b1a00492-073a-47ea-816f-4c329264a828",
-      scope: "openid profile email offline_access grok-cli:access api:access",
-      iat: 1783789218,
-      exp: 1783810818,
-    });
-    const idToken = fakeJwt({
-      iss: "https://auth.x.ai",
-      aud: "b1a00492-073a-47ea-816f-4c329264a828",
-      sub: "xai-user-1",
-      email: "grok@example.com",
-      iat: 1783789218,
-      exp: 1783810818,
-    });
-
-    const result = normalizeInput({
-      access_token: accessToken,
-      refresh_token: "xai-refresh-token",
-      id_token: idToken,
-      token_type: "Bearer",
-      expires_in: 21600,
-      scope: "openid profile email offline_access grok-cli:access api:access",
-      user_code: "one-time-user-code",
-      device_response: { device_code: "one-time-device-code" },
-    }, { sourceName: "oidc.json", sourcePath: "oidc.json" });
-
-    expect(detectInputFormat({ access_token: accessToken, refresh_token: "xai-refresh-token" })).toBe("grok");
-    expect(result.accounts).toHaveLength(1);
-    expect(result.accounts[0]).toMatchObject({
-      provider: "xai",
-      accessToken,
-      refreshToken: "xai-refresh-token",
-      idToken,
-      email: "grok@example.com",
-      userId: "xai-user-1",
-      issuer: "https://auth.x.ai",
-      clientId: "b1a00492-073a-47ea-816f-4c329264a828",
-      tokenType: "Bearer",
-      expiresIn: 21600,
-      issuedAt: "2026-07-11T17:00:18.000Z",
-      expiresAt: "2026-07-11T23:00:18.000Z",
-    });
-    expect(result.accounts[0]).not.toHaveProperty("deviceResponse");
-    expect(result.accounts[0]).not.toHaveProperty("userCode");
-  });
-
-  it("normalizes every account in a merged Grok CLI auth.json", () => {
-    const input = {
-      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828::user-1": {
-        key: "access-1",
-        auth_mode: "oidc",
-        create_time: "2026-07-11T21:00:18.000000000Z",
-        user_id: "user-1",
-        email: "one@example.com",
-        principal_type: "User",
-        principal_id: "user-1",
-        refresh_token: "refresh-1",
-        expires_at: "2026-07-12T03:00:18.000000000Z",
-        oidc_issuer: "https://auth.x.ai",
-        oidc_client_id: "b1a00492-073a-47ea-816f-4c329264a828",
-      },
-      "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828::user-2": {
-        key: "access-2",
-        user_id: "user-2",
-        refresh_token: "refresh-2",
-        oidc_issuer: "https://auth.x.ai",
-        oidc_client_id: "b1a00492-073a-47ea-816f-4c329264a828",
-      },
-    };
-
-    expect(detectInputFormat(input)).toBe("grok");
-    const accounts = normalizeInput(input, { sourceName: "auth.json", sourcePath: "auth.json" }).accounts;
-    expect(accounts).toHaveLength(2);
-    expect(accounts).toEqual(expect.arrayContaining([
-      expect.objectContaining({ provider: "xai", accessToken: "access-1", refreshToken: "refresh-1", userId: "user-1" }),
-      expect.objectContaining({ provider: "xai", accessToken: "access-2", refreshToken: "refresh-2", userId: "user-2" }),
-    ]));
-  });
-
-  it("recognizes xAI accounts in CPA and mixed Sub2API exports", () => {
-    const cpa = normalizeInput({
-      type: "xai",
-      auth_kind: "oauth",
-      access_token: "xai-access",
-      refresh_token: "xai-refresh",
-      email: "xai@example.com",
-      sub: "xai-sub",
-      base_url: "https://cli-chat-proxy.grok.com/v1",
-      token_endpoint: "https://auth.x.ai/oauth2/token",
-      redirect_uri: "http://127.0.0.1:56121/callback",
-      disabled: false,
-      headers: { "x-xai-token-auth": "xai-grok-cli" },
-    }, { sourceName: "xai.json", sourcePath: "xai.json" }).accounts[0];
-
-    const mixed = normalizeInput({
-      type: "sub2api-data",
-      accounts: [
-        { platform: "openai", type: "oauth", credentials: { access_token: "openai-access" } },
-        { platform: "grok", type: "oauth", credentials: { access_token: "grok-access", refresh_token: "grok-refresh", client_id: "b1a00492-073a-47ea-816f-4c329264a828" } },
-      ],
-    }, { sourceName: "sub2api.json", sourcePath: "sub2api.json" }).accounts;
-
-    expect(cpa).toMatchObject({
-      provider: "xai",
-      userId: "xai-sub",
-      baseUrl: "https://cli-chat-proxy.grok.com/v1",
-      tokenEndpoint: "https://auth.x.ai/oauth2/token",
-      redirectUri: "http://127.0.0.1:56121/callback",
-      disabled: false,
-      headers: { "x-xai-token-auth": "xai-grok-cli" },
-    });
-    expect(mixed.map((account) => account.provider)).toEqual(["openai", "xai"]);
-  });
-
-  it("rejects an xAI structure whose JWT belongs to OpenAI", () => {
-    const result = normalizeInput({
-      type: "xai",
-      access_token: fakeJwt({
-        iss: "https://auth.openai.com",
-        aud: "https://api.openai.com/v1",
-        exp: 4102444800,
-      }),
-      refresh_token: "refresh-token",
-    }, { sourceName: "conflict.json", sourcePath: "conflict.json" });
-
-    expect(result.accounts).toHaveLength(0);
-    expect(result.rejections.join("\n")).toContain("平台冲突");
-    expect(result.warnings).toEqual([]);
-  });
-
-  it("preserves a non-default xAI OAuth client instead of rejecting the account", () => {
-    const result = normalizeInput({
-      access_token: fakeJwt({
-        iss: "https://auth.x.ai",
-        aud: "another-client",
-        client_id: "another-client",
-        sub: "xai-user",
-      }),
-      refresh_token: "refresh-token",
-    }, { sourceName: "other-client.json", sourcePath: "other-client.json" });
-
-    expect(result.accounts).toHaveLength(1);
-    expect(result.rejections).toEqual([]);
-    expect(result.accounts[0]).toMatchObject({ provider: "xai", clientId: "another-client" });
-    expect(result.warnings).toEqual([]);
-    expect(renderFormat(result.accounts, "grok")).toHaveProperty("https://auth.x.ai::another-client");
-  });
-
-  it("keeps opaque credentials unknown unless provider evidence exists", () => {
-    const unknown = normalizeInput(
-      { access_token: "opaque-token" },
-      { sourceName: "unknown.json", sourcePath: "unknown.json" },
-    );
-    const xai = normalizeInput(
-      { refresh_token: "refresh-token", token_endpoint: "https://auth.x.ai/oauth2/token" },
-      { sourceName: "xai.json", sourcePath: "xai.json" },
-    );
-
-    expect(unknown.accounts[0].provider).toBe("unknown");
-    expect(buildOutputPlan(unknown.accounts, ["cpa", "sub2api", "codex", "grok"])).toEqual([]);
-    expect(xai.accounts[0].provider).toBe("xai");
-  });
-
-  it("does not warn for expired credentials", () => {
-    const result = normalizeInput({
-      access_token: fakeJwt({
-        iss: "https://auth.x.ai",
-        exp: 1,
-        client_id: "another-client",
-      }),
-      refresh_token: "refresh-token",
-    }, { sourceName: "expired.json", sourcePath: "expired.json" });
-
-    expect(result.accounts).toHaveLength(1);
-    expect(result.warnings).toEqual([]);
-  });
-
-  it("renders the Grok OIDC fixture exactly for every applicable contract", async () => {
-    const account = (await normalizeGrokOidcFixture()).accounts[0];
-
-    expect(renderFormat([account], "cpa")).toEqual(await readFixtureJson("expected/cpa-xai.json"));
-    expect(renderFormat([account], "sub2api", { now: new Date("2026-07-12T00:00:00.000Z") })).toEqual(
-      await readFixtureJson("expected/sub2api-grok.json"),
-    );
-    expect(renderFormat([account], "grok")).toEqual(await readFixtureJson("expected/grok.json"));
-  });
-
-  it("does not synthesize CPA or Sub2API defaults already owned by consumers", () => {
-    const account = normalizeInput({
-      issuer: "https://auth.x.ai",
-      access_token: "opaque-access-token",
-      refresh_token: "refresh-token",
-    }, { sourceName: "oidc.json", sourcePath: "oidc.json" }).accounts[0];
-
-    const cpa = renderFormat([account], "cpa") as Record<string, unknown>;
-    expect(cpa).toMatchObject({
-      type: "xai",
-      access_token: "opaque-access-token",
-      refresh_token: "refresh-token",
-    });
-    expect(cpa).not.toHaveProperty("auth_kind");
-    expect(cpa).not.toHaveProperty("base_url");
-    expect(cpa).not.toHaveProperty("token_endpoint");
-    expect(cpa).not.toHaveProperty("redirect_uri");
-    expect(cpa).not.toHaveProperty("headers");
-
-    const sub2api = renderFormat([account], "sub2api").accounts[0];
-    expect(sub2api.credentials).toEqual({
-      access_token: "opaque-access-token",
-      refresh_token: "refresh-token",
-    });
-    expect(sub2api.credentials).not.toHaveProperty("chatgpt_account_id");
-    expect(sub2api.credentials).not.toHaveProperty("chatgpt_user_id");
-    expect(sub2api.credentials).not.toHaveProperty("plan_type");
-  });
-
-  it("filters mixed providers by output format and never plans empty files", () => {
-    const openai = normalizeInput(
-      { access_token: "openai-access", refresh_token: "openai-refresh", email: "openai@example.com" },
-      { sourceName: "openai.json", sourcePath: "openai.json" },
-    ).accounts[0];
-    const xai = normalizeInput(
-      { type: "xai", access_token: "xai-access", refresh_token: "xai-refresh", email: "grok@example.com", sub: "xai-user-1" },
-      { sourceName: "xai.json", sourcePath: "xai.json" },
-    ).accounts[0];
-
-    const files = buildOutputPlan(
-      [openai, xai],
-      ["cpa", "sub2api", "codex2api", "codexmanager", "codex", "grok" as never],
-    );
-
-    expect(files.filter((file) => file.format === "cpa")).toHaveLength(2);
-    expect(files.find((file) => file.format === "sub2api")?.accountCount).toBe(2);
-    expect(files.find((file) => file.format === "codex2api")?.accountCount).toBe(1);
-    expect(files.filter((file) => file.format === "codexmanager")).toHaveLength(1);
-    expect(files.filter((file) => file.format === "codex")).toHaveLength(1);
-    expect(files.find((file) => (file.format as string) === "grok")?.accountCount).toBe(1);
-  });
-
-  it("counts only accounts supported by at least one selected output format", () => {
-    const openai = normalizeInput(
-      { type: "codex", access_token: "openai-access" },
-      { sourceName: "openai.json", sourcePath: "openai.json" },
-    ).accounts[0];
-    const xai = normalizeInput(
-      { type: "xai", access_token: "xai-access" },
-      { sourceName: "xai.json", sourcePath: "xai.json" },
-    ).accounts[0];
-    const unknown = normalizeInput(
-      { access_token: "opaque-access" },
-      { sourceName: "unknown.json", sourcePath: "unknown.json" },
-    ).accounts[0];
-
-    expect(filterAccountsForFormats([openai, xai, unknown], ["codex"])).toEqual([openai]);
-    expect(filterAccountsForFormats([openai, xai, unknown], ["cpa"])).toEqual([openai, xai]);
-    expect(filterAccountsForFormats([openai, xai, unknown], ["codex", "grok"])).toEqual([openai, xai]);
-  });
-
-  it("parses multiple JSON documents as an array without splitting by line", () => {
-    const input = [
-      JSON.stringify({ access_token: "a", email: "a@example.com" }, null, 2),
-      JSON.stringify({ access_token: "b", email: "b@example.com" }, null, 2),
-    ].join("\n");
-
-    expect(parseInputPayload(input)).toEqual([
-      { access_token: "a", email: "a@example.com" },
-      { access_token: "b", email: "b@example.com" },
-    ]);
-    expect(parseInputPayloadWithMeta(input).documentCount).toBe(2);
-  });
-
-  it("keeps input format detection per JSON document in mixed input", () => {
-    const input = parseInputPayload(
-      [
-        JSON.stringify({
-          type: "codex",
-          access_token: "cpa-access",
-          refresh_token: "cpa-refresh",
-          session_token: "cpa-session",
-          email: "cpa@example.com",
-        }),
-        JSON.stringify({
-          name: "Sub Account",
-          credentials: {
-            access_token: "sub-access",
-            email: "sub@example.com",
-          },
-        }),
-      ].join("\n"),
-    );
-
-    const result = normalizeInput(input, { sourceName: "mixed.jsonl", sourcePath: "mixed.jsonl" });
-
-    expect(result.inputFormat).toBe("unknown");
-    expect(result.accounts.map((account) => account.inputFormat)).toEqual(["cpa", "sub2api"]);
-    expect(result.accounts.map((account) => account.email)).toEqual(["cpa@example.com", "sub@example.com"]);
-  });
-
-  it("normalizes token, identity, plan, and time fields from flat input and JWT claims", () => {
-    const idToken = fakeJwt({
-      email: "user@example.com",
-      name: "Example User",
-      sub: "chatgpt-user-1",
-      exp: 4102444800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_chatgpt_1",
-        chatgpt_user_id: "chatgpt-user-1",
-        plan_type: "plus",
-      },
-    });
-
-    const result = normalizeInput(
-      {
-        access_token: "access-token",
-        refresh_token: "refresh-token",
-        session_token: "session-token",
-        account_id: "account-1",
-        id_token: idToken,
-        last_refresh: "2026-07-03T00:00:00.000Z",
-        expired: "2026-07-03T01:00:00.000Z",
-      },
-      { sourceName: "input.json", sourcePath: "input.json" },
-    );
-
-    expect(result.accounts).toHaveLength(1);
-    expect(result.accounts[0]).toMatchObject({
-      accessToken: "access-token",
-      refreshToken: "refresh-token",
-      sessionToken: "session-token",
-      accountId: "account-1",
-      chatgptAccountId: "acct_chatgpt_1",
-      chatgptUserId: "chatgpt-user-1",
-      email: "user@example.com",
-      name: "Example User",
-      planType: "plus",
-      lastRefresh: "2026-07-03T00:00:00.000Z",
-      expiresAt: "2026-07-03T01:00:00.000Z",
-      idTokenSynthetic: false,
-      sourceName: "input.json",
-    });
-  });
-
-  it("converts a ChatGPT web session fixture without dropping nested account fields", async () => {
-    const account = (await normalizeChatGptSessionFixture()).accounts[0];
-
-    expect(account).toMatchObject({
-      accessToken: expect.any(String),
-      sessionToken: "fixture-session-token",
-      accountId: "workspace_fixture_456",
-      chatgptAccountId: "workspace_fixture_456",
-      userId: "user_fixture_123",
-      chatgptUserId: "user_fixture_123",
-      email: "fixture@example.com",
-      name: "Fixture User",
-      planType: "team",
-      workspaceId: "workspace_fixture_789",
-      expiresAt: "2026-07-03T01:00:00.000Z",
-    });
-
-    expect(renderFormat([account], "cpa", { now: new Date("2026-07-04T00:00:00.000Z") })).toEqual(
-      await readFixtureJson("expected/cpa.json"),
-    );
-    expect(renderFormat([account], "codex2api")).toEqual(await readFixtureJson("expected/codex2api.json"));
-    expect(renderFormat([account], "codexmanager")).toEqual(await readFixtureJson("expected/codexmanager.json"));
-    expect(renderFormat([account], "sub2api", { now: new Date("2026-07-04T00:00:00.000Z") })).toEqual(
-      await readFixtureJson("expected/sub2api.json"),
-    );
-    expect(renderFormat([account], "codex", { now: new Date("2026-07-04T00:00:00.000Z") })).toEqual(
-      await readFixtureJson("expected/codex.json"),
-    );
-  });
-
-  it("prefers access_token auth claims over id_token claims for ChatGPT sessions", () => {
-    const idToken = fakeJwt({
-      email: "id@example.com",
-      name: "ID User",
-      sub: "user-from-id",
-      exp: 4102444800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_id",
-        chatgpt_user_id: "user-from-id",
-        chatgpt_plan_type: "team",
-      },
-    });
-    const accessToken = fakeJwt({
-      email: "access@example.com",
-      name: "Access User",
-      sub: "user-from-access",
-      exp: 1783000800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_access",
-        chatgpt_user_id: "user-from-access",
-        chatgpt_plan_type: "plus",
-      },
-    });
-
-    const account = normalizeInput(
-      {
-        accessToken,
-        id_token: idToken,
-        sessionToken: "session-token",
-        user: { id: "session-user", email: "session@example.com", name: "Session User" },
-        account: { id: "session-account", planType: "free" },
-      },
-      { sourceName: "session.json", sourcePath: "session.json" },
-    ).accounts[0];
-
-    expect(account).toMatchObject({
-      accountId: "acct_from_access",
-      chatgptAccountId: "acct_from_access",
-      chatgptUserId: "user-from-access",
-      planType: "plus",
-      email: "access@example.com",
-      name: "Access User",
-      expiresAt: "2026-07-02T14:00:00.000Z",
-    });
-  });
-
-  it("derives all normalized metadata fields available from access token claims", () => {
-    const accessToken = fakeJwt({
-      iss: "https://auth.openai.com",
-      aud: ["https://api.openai.com/v1"],
-      client_id: "app_access",
-      sub: "auth0|access-sub",
-      scp: ["openid", "email", "profile", "offline_access", "model.request"],
-      nbf: 1782993600,
-      iat: 1782997200,
-      exp: 1783000800,
-      "https://api.openai.com/profile": {
-        email: "claim@example.com",
-        name: "Claim Name",
-      },
-      "https://api.openai.com/auth": {
-        chatgpt_account_user_id: "user-from-pair__acct-from-pair",
-        chatgpt_plan_type: "k12",
-        workspace_id: "workspace-from-auth",
-      },
-    });
-
-    const result = normalizeInput(
-      {
-        accessToken,
-        sessionToken: "session-token",
-        issuer: "https://stale.example",
-        chatgpt_user_id: "json-chatgpt-user",
-        chatgpt_account_user_id: "json-user__json-acct",
-        expires: "2099-01-01T00:00:00.000Z",
-        lastRefresh: "2099-01-01T00:00:00.000Z",
-        user: { id: "auth0|json-sub", email: "json@example.com", name: "JSON Name" },
-        account: {
-          id: "acct-from-json",
-          planType: "free",
-          workspaceId: "workspace-from-json",
-        },
-      },
-      { sourceName: "session.json", sourcePath: "session.json" },
-      { locale: "zh" },
-    );
-
-    expect(result.accounts[0]).toMatchObject({
-      accountId: "acct-from-pair",
-      chatgptAccountId: "acct-from-pair",
-      chatgptUserId: "user-from-pair",
-      chatgptAccountUserId: "user-from-pair__acct-from-pair",
-      userId: "auth0|access-sub",
-      issuer: "https://auth.openai.com",
-      audience: ["https://api.openai.com/v1"],
-      clientId: "app_access",
-      scopes: ["openid", "email", "profile", "offline_access", "model.request"],
-      notBefore: "2026-07-02T12:00:00.000Z",
-      planType: "k12",
-      email: "claim@example.com",
-      name: "Claim Name",
-      workspaceId: "workspace-from-auth",
-      lastRefresh: "2026-07-02T13:00:00.000Z",
-      expiresAt: "2026-07-02T14:00:00.000Z",
-    });
-    expect(result.warnings).toEqual(expect.arrayContaining([
-      "session.json: access_token claim 不一致，覆盖字段: account_id,user_id,chatgpt_user_id,chatgpt_account_user_id,issuer,plan_type,email,name,workspace_id,expires_at,last_refresh",
-    ]));
-  });
-
-  it("warns when sanity-checkable JWT claims are invalid", () => {
-    const accessToken = fakeJwt({
-      iss: "https://example.invalid",
-      aud: ["https://example.invalid/api"],
-      sub: "auth0|access-sub",
-      nbf: 1783000801,
-      exp: 1783000800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_access",
-        chatgpt_user_id: "user-from-access",
-      },
-    });
-
-    const result = normalizeInput(
-      {
-        accessToken,
-        sessionToken: "session-token",
-      },
-      { sourceName: "session.json", sourcePath: "session.json" },
-      { locale: "zh" },
-    );
-
-    expect(result.warnings).toEqual(expect.arrayContaining([
-      "session.json: JWT claim 校验异常: iss,aud,nbf",
-    ]));
-  });
-
-  it("preserves non-session JSON identity fields ahead of JWT claims", () => {
-    const accessToken = fakeJwt({
-      iss: "https://auth.openai.com",
-      aud: ["https://api.openai.com/v1"],
-      sub: "claim-user",
-      exp: 1783000800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_claim",
-        chatgpt_user_id: "user-from-claim",
-        chatgpt_plan_type: "plus",
-      },
-    });
-
-    const result = normalizeInput(
-      {
-        type: "codex",
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-        account_id: "acct_from_json",
-        chatgpt_user_id: "user-from-json",
-        issuer: "https://stored.example",
-        email: "json@example.com",
-        plan_type: "free",
-      },
-      { sourceName: "cpa.json", sourcePath: "cpa.json" },
-    );
-
-    expect(result.accounts[0]).toMatchObject({
-      inputFormat: "cpa",
-      accountId: "acct_from_json",
-      chatgptAccountId: "acct_from_claim",
-      chatgptUserId: "user-from-json",
-      chatgptAccountUserId: "user-from-json__acct_from_claim",
-      issuer: "https://stored.example",
-      email: "json@example.com",
-      planType: "free",
-      expiresAt: "2026-07-02T14:00:00.000Z",
-    });
-    expect(result.warnings).not.toEqual(expect.arrayContaining([
-      "cpa.json: JWT claim 校验异常: iss",
-    ]));
-  });
-
-  it("overrides stale ChatGPT session account fields with access token claims and warns", () => {
-    const accessToken = fakeJwt({
-      sub: "auth0|session-user",
-      exp: 1783000800,
-      workspace_id: "workspace_from_access_top",
-      "https://api.openai.com/profile": {
-        email: "access-profile@example.com",
-      },
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_access",
-        chatgpt_user_id: "user-from-access",
-        user_id: "user-from-access",
-        chatgpt_plan_type: "k12",
-        workspace_id: "workspace_from_access_auth",
-      },
-    });
-
-    const result = normalizeInput(
-      {
-        accessToken,
-        sessionToken: "session-token",
-        expires: "2099-01-01T00:00:00.000Z",
-        user: { id: "auth0|session-user", email: "session@example.com" },
-        account: {
-          id: "acct_from_json",
-          planType: "free",
-          workspaceId: "workspace_from_json",
-        },
-      },
-      { sourceName: "session.json", sourcePath: "session.json" },
-      { locale: "zh" },
-    );
-
-    expect(result.accounts[0]).toMatchObject({
-      accountId: "acct_from_access",
-      chatgptAccountId: "acct_from_access",
-      chatgptUserId: "user-from-access",
-      planType: "k12",
-      email: "access-profile@example.com",
-      workspaceId: "workspace_from_access_top",
-      expiresAt: "2026-07-02T14:00:00.000Z",
-    });
-    expect(result.warnings).toEqual(expect.arrayContaining([
-      "session.json: access_token claim 不一致，覆盖字段: account_id,chatgpt_user_id,plan_type,email,workspace_id,expires_at",
-    ]));
-    expect(result.warnings).toHaveLength(1);
-  });
-
-  it("generates a marked synthetic id_token when claims can be derived", () => {
-    const accessToken = fakeJwt({
-      email: "derived@example.com",
-      sub: "derived-user",
-      exp: 4102444800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_derived",
-        chatgpt_user_id: "derived-user",
-      },
-    });
-
-    const account = normalizeInput(
-      {
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-      },
-      { sourceName: "stdin", sourcePath: "stdin" },
-    ).accounts[0];
-
-    expect(account.warnings).toEqual([]);
-
-    expect(account.idTokenSynthetic).toBe(true);
-    expect(account.idToken).toMatch(/^[^.]+\.[^.]+\.[^.]+$/);
-    expect(decodeJwtPayload(account.idToken)).toMatchObject({
-      iat: 0,
-      sub: "derived-user",
-      email: "derived@example.com",
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_derived",
-        chatgpt_user_id: "derived-user",
-      },
-    });
-
-    expect(renderFormat([account], "cpa")).toMatchObject({
-      disabled: false,
-      refresh_token: "refresh-token",
-      id_token_synthetic: true,
-    });
-    expect(renderFormat([account], "sub2api").accounts[0].extra).toMatchObject({
-      id_token_synthetic: true,
-    });
-    expect(renderFormat([account], "codex2api")[0]).not.toHaveProperty("id_token_synthetic");
-    expect(renderFormat([account], "codexmanager")).toMatchObject({
-      tokens: {
-        id_token: expect.any(String),
-      },
-      meta: expect.not.objectContaining({
-        id_token_synthetic: true,
-      }),
-    });
-    expect(renderFormat([account], "codex")).toMatchObject({
-      tokens: {
-        id_token: expect.any(String),
-      },
-    });
-  });
-
-  it("suppresses generated synthetic id_token at render time when disabled", () => {
-    const accessToken = fakeJwt({
-      email: "derived@example.com",
-      sub: "derived-user",
-      exp: 4102444800,
-    });
-
-    const account = normalizeInput(
-      {
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-      },
-      { sourceName: "stdin", sourcePath: "stdin" },
-    ).accounts[0];
-
-    expect(account.idTokenSynthetic).toBe(true);
-    expect(account.idToken).toEqual(expect.any(String));
-
-    expect(renderFormat([account], "cpa", { allowSyntheticIdToken: false })).toMatchObject({
-      id_token: "",
-      access_token: accessToken,
-      refresh_token: "refresh-token",
-    });
-    expect(renderFormat([account], "cpa", { allowSyntheticIdToken: false })).not.toHaveProperty("id_token_synthetic");
-    expect(renderFormat([account], "codex", { allowSyntheticIdToken: false })).toMatchObject({
-      tokens: {
-        id_token: "",
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-      },
-    });
-    expect(renderFormat([account], "codex2api", { allowSyntheticIdToken: false })).toEqual([
-      {
-        name: "derived@example.com",
-        email: "derived@example.com",
-        refresh_token: "refresh-token",
-        access_token: accessToken,
-        expires_at: "2100-01-01T00:00:00.000Z",
-      },
-    ]);
-    expect(renderFormat([account], "sub2api", { allowSyntheticIdToken: false }).accounts[0]).toMatchObject({
-      credentials: {
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-        expires_at: "2100-01-01T00:00:00.000Z",
-        email: "derived@example.com",
-      },
-      extra: {
-        import_source: "authconv",
-      },
-    });
-    expect(renderFormat([account], "sub2api", { allowSyntheticIdToken: false }).accounts[0].extra).not.toHaveProperty("id_token_synthetic");
-    expect(renderFormat([account], "codexmanager", { allowSyntheticIdToken: false })).toMatchObject({
-      tokens: {
-        access_token: accessToken,
-        refresh_token: "refresh-token",
-      },
-    });
-    const codexManagerWithoutSynthetic = renderFormat([account], "codexmanager", { allowSyntheticIdToken: false }) as {
-      tokens: Record<string, unknown>;
-    };
-    expect(codexManagerWithoutSynthetic.tokens).not.toHaveProperty("id_token");
-  });
-
-  it("omits refresh_token from every output format without removing it from normalized accounts", () => {
-    const openAiAccount = normalizeInput(
-      {
-        type: "codex",
-        access_token: "openai-access-token",
-        refresh_token: "openai-refresh-token",
-        email: "openai@example.com",
-      },
-      { sourceName: "openai.json", sourcePath: "openai.json" },
-    ).accounts[0];
-    const xaiAccount = normalizeInput(
-      {
-        type: "xai",
-        access_token: "xai-access-token",
-        refresh_token: "xai-refresh-token",
-        email: "xai@example.com",
-        sub: "xai-user",
-      },
-      { sourceName: "xai.json", sourcePath: "xai.json" },
-    ).accounts[0];
-
-    const files = [
-      ...buildOutputPlan(
-        [openAiAccount],
-        ["cpa", "sub2api", "codex2api", "codexmanager", "codex"],
-        { includeRefreshToken: false },
-      ),
-      ...buildOutputPlan(
-        [xaiAccount],
-        ["cpa", "sub2api", "grok"],
-        { includeRefreshToken: false },
-      ),
-    ];
-
-    expect(openAiAccount.refreshToken).toBe("openai-refresh-token");
-    expect(xaiAccount.refreshToken).toBe("xai-refresh-token");
-    expect(new Set(files.map((file) => file.format))).toEqual(new Set([
-      "cpa",
-      "sub2api",
-      "codex2api",
-      "codexmanager",
-      "codex",
-      "grok",
-    ]));
-    for (const file of files) {
-      expect(JSON.stringify(file.content), file.format).not.toContain('"refresh_token"');
+import { AccountStore } from "../src/account-store.js";
+import { parseFormatList } from "../src/formats.js";
+import { ingestSources } from "../src/ingestion.js";
+import { parseNodeJsonTokens } from "../src/input-node.js";
+import { buildExportManifest, collectExportEntry } from "../src/output.js";
+import type {
+  InputFormat,
+  InputSource,
+  NormalizedAccount,
+  OutputFormat,
+  RenderOptions,
+} from "../src/types.js";
+
+describe("authconv core contracts", () => {
+  it("keeps the OpenAI fixture wire shape across every applicable format", async () => {
+    const store = await ingestValue(await fixture("chatgpt-session.json"));
+    const now = new Date("2026-07-04T00:00:00.000Z");
+
+    for (const format of ["cpa", "sub2api", "codex2api", "codexmanager", "codex"] as const) {
+      expect(await renderJson(store, format, { now })).toEqual(await fixture(`expected/${format}.json`));
     }
   });
 
-  it("signs existing synthetic id_token and can suppress it at render time", () => {
-    const syntheticIdToken = fakeJwt({ email: "signed@example.com" }).replace(/\.[^.]+$/, ".");
-    const signedAccount = normalizeInput(
-      {
-        access_token: "access-token",
-        id_token: syntheticIdToken,
-        id_token_synthetic: true,
-        email: "signed@example.com",
-      },
-      { sourceName: "cpa.json", sourcePath: "cpa.json" },
-    ).accounts[0];
+  it("keeps the xAI fixture wire shape and drops device-flow state", async () => {
+    const store = await ingestValue(await fixture("grok-oidc.json"));
+    const account = onlyAccount(store);
 
-    expect(signedAccount.idToken?.split(".")[2]).not.toBe("");
-    expect(signedAccount.idTokenSynthetic).toBe(true);
-    expect(renderFormat([signedAccount], "cpa", { allowSyntheticIdToken: false })).toMatchObject({
-      id_token: "",
-      access_token: "access-token",
+    expect(account).toMatchObject({
+      provider: "xai",
+      clientId: "b1a00492-073a-47ea-816f-4c329264a828",
+      userId: "xai-fixture-user",
+      email: "grok-fixture@example.com",
+    });
+    expect(account).not.toHaveProperty("device_response");
+    expect(account).not.toHaveProperty("user_code");
+    expect(account).not.toHaveProperty("accountId");
+    expect(account).not.toHaveProperty("planType");
+
+    const now = new Date("2026-07-12T00:00:00.000Z");
+    expect(await renderJson(store, "cpa", { now })).toEqual(await fixture("expected/cpa-xai.json"));
+    expect(await renderJson(store, "sub2api", { now })).toEqual(await fixture("expected/sub2api-grok.json"));
+    expect(await renderJson(store, "grok", { now })).toEqual(await fixture("expected/grok.json"));
+  });
+
+  it("uses recognized structure before JWT issuer and JWT only for unknown structure", async () => {
+    const openAiJwt = jwt({ iss: "https://auth.openai.com", sub: "openai-user" });
+    const xaiJwt = jwt({ iss: "https://auth.x.ai", sub: "xai-user" });
+    const store = await ingestValue([
+      { type: "codex", access_token: xaiJwt },
+      { platform: "grok", credentials: { access_token: openAiJwt } },
+      { access_token: openAiJwt },
+      { access_token: "opaque-token" },
+    ]);
+
+    expect([...store.values()].map((account) => account.provider)).toEqual([
+      "openai",
+      "xai",
+      "openai",
+      "unknown",
+    ]);
+  });
+
+  it.each([
+    ["openai", "https://auth.openai.com"],
+    ["xai", "https://auth.x.ai"],
+  ] as const)("uses a known id_token issuer when the access-token issuer is unknown: %s", async (provider, issuer) => {
+    const account = onlyAccount(await ingestValue({
+      accounts: [{
+        platform: "custom",
+        credentials: {
+          access_token: jwt({ iss: "https://other.example", sub: "access-user" }),
+          id_token: jwt({ iss: issuer, sub: `${provider}-user` }),
+        },
+      }],
+    }));
+
+    expect(account).toMatchObject({ provider, inputFormat: "sub2api" });
+  });
+
+  it.each([
+    ["platform", { platform: "grok", access_token: "platform-access", refresh_token: "platform-refresh" }],
+    ["issuer", { issuer: "https://auth.x.ai", access_token: "issuer-access", refresh_token: "issuer-refresh" }],
+    ["token endpoint", {
+      token_endpoint: "https://auth.x.ai/oauth2/token",
+      access_token: "endpoint-access",
+      refresh_token: "endpoint-refresh",
+    }],
+  ] as const)("recognizes flat xAI credentials from their %s before codex2api", async (_label, input) => {
+    const account = onlyAccount(await ingestValue(input));
+
+    expect(account).toMatchObject({
+      provider: "xai",
+      inputFormat: "grok",
+      accessToken: input.access_token,
     });
   });
 
-  it("normalizes Codex auth.json and keeps access token auth claims ahead of stored account_id", () => {
-    const idToken = fakeJwt({
-      email: "id@example.com",
-      sub: "user-from-id",
-      exp: 4102444800,
-      "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_id_token",
-        chatgpt_user_id: "user-from-id",
-        chatgpt_plan_type: "team",
+  it("keeps explicit CPA xAI records as CPA even when they carry xAI endpoint metadata", async () => {
+    const account = onlyAccount(await ingestValue({
+      type: "xai",
+      access_token: "cpa-access",
+      refresh_token: "cpa-refresh",
+      issuer: "https://auth.x.ai",
+      token_endpoint: "https://auth.x.ai/oauth2/token",
+    }));
+
+    expect(account).toMatchObject({
+      provider: "xai",
+      inputFormat: "cpa",
+      accessToken: "cpa-access",
+    });
+  });
+
+  it.each([
+    ["platform", { platform: "grok" }],
+    ["type", { type: "xai" }],
+  ] as const)("recognizes explicit xAI %s credentials before the generic session shape", async (_label, evidence) => {
+    const account = onlyAccount(await ingestValue({
+      ...evidence,
+      accessToken: "xai-session-shaped",
+      user: { id: "xai-user" },
+    }));
+
+    expect(account).toMatchObject({
+      provider: "xai",
+      inputFormat: "grok",
+      accessToken: "xai-session-shaped",
+    });
+  });
+
+  it("never applies the OpenAI synthetic marker to an xAI id_token", async () => {
+    const idToken = jwt({ iss: "https://auth.x.ai", sub: "xai-user" }, "real-signature");
+    const store = await ingestValue({
+      type: "xai",
+      access_token: "opaque-access",
+      id_token: idToken,
+      id_token_synthetic: true,
+    });
+
+    expect(onlyAccount(store)).toMatchObject({ provider: "xai", idToken });
+    expect(onlyAccount(store)).not.toHaveProperty("idTokenSynthetic");
+  });
+
+  it("does not derive the xAI access-token audience contract from an ID token", async () => {
+    const store = await ingestValue({
+      platform: "grok",
+      credentials: {
+        access_token: "opaque-access",
+        id_token: jwt({
+          iss: "https://auth.x.ai",
+          client_id: "id-token-client",
+        }),
       },
     });
-    const accessToken = fakeJwt({
-      email: "access@example.com",
-      sub: "user-from-access",
-      exp: 1783000800,
+
+    expect(onlyAccount(store).clientId).toBeUndefined();
+    expect(onlyAccount(store).tokenVerificationContext).toEqual({ provider: "xai" });
+  });
+
+  it("parses Grok issuer keys so non-default client and user identity survive round-trip", async () => {
+    const input = {
+      "https://auth.x.ai::custom-client::key-user": {
+        key: "opaque-access",
+        auth_mode: "oidc",
+        refresh_token: "opaque-refresh",
+        email: "key@example.com",
+      },
+    };
+    const store = await ingestValue(input);
+
+    expect(onlyAccount(store)).toMatchObject({
+      provider: "xai",
+      clientId: "custom-client",
+      userId: "key-user",
+    });
+    expect(await renderJson(store, "grok")).toMatchObject({
+      "https://auth.x.ai::custom-client": {
+        key: "opaque-access",
+        user_id: "key-user",
+        oidc_client_id: "custom-client",
+      },
+    });
+  });
+
+  it("imports every entry from a multi-account Grok auth.json", async () => {
+    const store = await ingestValue({
+      "https://auth.x.ai::client-a::user-a": {
+        key: "access-a",
+        refresh_token: "refresh-a",
+        oidc_issuer: "https://auth.x.ai",
+        oidc_client_id: "client-a",
+      },
+      "https://auth.x.ai::client-a::user-b": {
+        key: "access-b",
+        refresh_token: "refresh-b",
+        oidc_issuer: "https://auth.x.ai",
+        oidc_client_id: "client-a",
+      },
+    });
+
+    expect([...store.values()]).toMatchObject([
+      { provider: "xai", accessToken: "access-a", userId: "user-a" },
+      { provider: "xai", accessToken: "access-b", userId: "user-b" },
+    ]);
+  });
+
+  it("imports consecutive JSON documents and detects each provider independently", async () => {
+    const openAi = JSON.stringify({
+      platform: "openai",
+      credentials: { access_token: "openai-access" },
+    });
+    const xai = JSON.stringify({
+      platform: "grok",
+      credentials: { access_token: "xai-access" },
+    });
+    const result = await ingestText(`${openAi}${xai}`);
+
+    expect([...result.store.values()].map((account) => account.provider)).toEqual(["openai", "xai"]);
+    expect(result.processedSources).toBe(2);
+    expect(result.inputFormat).toBe("sub2api");
+  });
+
+  it("parses nested Codex auth and prefers access-token account claims", async () => {
+    const accessToken = jwt({
+      iss: "https://auth.openai.com",
+      "https://api.openai.com/auth": { chatgpt_account_id: "claim-account" },
+    });
+    const store = await ingestValue({
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: accessToken,
+        refresh_token: "refresh",
+        account_id: "stale-account",
+      },
+    });
+
+    expect(onlyAccount(store)).toMatchObject({
+      provider: "openai",
+      accessToken,
+      accountId: "claim-account",
+      chatgptAccountId: "claim-account",
+    });
+  });
+
+  it("keeps accounts separate when a shared access token conflicts with another credential", async () => {
+    const store = await ingestValue([
+      { platform: "openai", credentials: { access_token: "shared", refresh_token: "refresh-a" } },
+      { platform: "openai", credentials: { access_token: "shared", refresh_token: "refresh-b" } },
+    ]);
+
+    expect(store.size).toBe(2);
+  });
+
+  it("replaces a synthetic id_token with a compatible real id_token", async () => {
+    const accessToken = jwt({
+      iss: "https://auth.openai.com",
+      email: "same@example.com",
+      "https://api.openai.com/auth": { chatgpt_account_id: "same-account" },
+    });
+    const realIdToken = jwt({ iss: "https://auth.openai.com", sub: "same-user" }, "real-signature");
+    const store = await ingestValue([
+      { platform: "openai", credentials: { access_token: accessToken, refresh_token: "refresh" } },
+      { platform: "openai", credentials: { access_token: accessToken, id_token: realIdToken } },
+    ]);
+
+    expect(store.size).toBe(1);
+    expect(onlyAccount(store)).toMatchObject({ idToken: realIdToken, idTokenSynthetic: false });
+  });
+
+  it("keeps token claims authoritative for Session but preserves explicit imported metadata", async () => {
+    const accessToken = jwt({
+      iss: "https://auth.openai.com",
+      email: "claim@example.com",
+      exp: 1_800_000_000,
       "https://api.openai.com/auth": {
-        chatgpt_account_id: "acct_from_access_token",
-        chatgpt_user_id: "user-from-access",
+        chatgpt_account_id: "claim-account",
         chatgpt_plan_type: "plus",
       },
     });
-
-    const result = normalizeInput(
-      {
-        auth_mode: "chatgpt",
-        OPENAI_API_KEY: null,
-        tokens: {
-          id_token: idToken,
-          access_token: accessToken,
-          refresh_token: "refresh-token",
-          account_id: "acct_from_file",
-        },
-        last_refresh: "2026-07-04T11:03:02.000Z",
-      },
-      { sourceName: "auth.json", sourcePath: "auth.json" },
-    );
-    const account = result.accounts[0];
-
-    expect(result.inputFormat).toBe("codex");
-    expect(account).toMatchObject({
-      inputFormat: "codex",
+    const session = await ingestValue({
       accessToken,
-      refreshToken: "refresh-token",
-      idToken,
-      accountId: "acct_from_access_token",
-      chatgptAccountId: "acct_from_access_token",
-      chatgptUserId: "user-from-access",
-      email: "access@example.com",
-      planType: "plus",
-      lastRefresh: "2026-07-04T11:03:02.000Z",
-      expiresAt: "2026-07-02T14:00:00.000Z",
+      user: { email: "stale@example.com" },
+      account: { id: "stale-account", planType: "free" },
     });
-    expect(renderFormat([account], "codex", { now: new Date("2026-07-05T00:00:00.000Z") })).toEqual({
-      auth_mode: "chatgpt",
-      OPENAI_API_KEY: null,
-      tokens: {
-        id_token: idToken,
+    const imported = await ingestValue({
+      platform: "openai",
+      credentials: {
         access_token: accessToken,
-        refresh_token: "refresh-token",
-        account_id: "acct_from_access_token",
-      },
-      last_refresh: "2026-07-04T11:03:02.000Z",
-    });
-  });
-
-  it("plans merged and split files with stable names", () => {
-    const accounts = normalizeInput(
-      [
-        { access_token: "a", email: "first@example.com", account_id: "acctfirst123456" },
-        { access_token: "b", email: "second@example.com", account_id: "acctsecond123456" },
-      ],
-      { sourceName: "accounts.json", sourcePath: "accounts.json" },
-    ).accounts;
-
-    const files = buildOutputPlan(accounts, ["sub2api", "codex2api", "cpa", "codexmanager", "codex"]);
-
-    expect(files.map((file) => file.path)).toEqual([
-      "sub2api/sub2api_2-accounts.json",
-      "codex2api/codex2api_2-accounts.json",
-      "cpa/cpa_first_example.com_acctfirst123.json",
-      "cpa/cpa_second_example.com_acctsecond12.json",
-      "codexmanager/codex-manager_first_example.com_acctfirst123.json",
-      "codexmanager/codex-manager_second_example.com_acctsecond12.json",
-      "codex/codex_first_example.com_acctfirst123.json",
-      "codex/codex_second_example.com_acctsecond12.json",
-    ]);
-  });
-
-  it("omits format folders when only one output format is selected", () => {
-    const accounts = normalizeInput(
-      [
-        { access_token: "a", email: "first@example.com", account_id: "acctfirst123456" },
-        { access_token: "b", email: "second@example.com", account_id: "acctsecond123456" },
-      ],
-      { sourceName: "accounts.json", sourcePath: "accounts.json" },
-    ).accounts;
-
-    expect(buildOutputPlan(accounts, ["cpa"]).map((file) => file.path)).toEqual([
-      "cpa_first_example.com_acctfirst123.json",
-      "cpa_second_example.com_acctsecond12.json",
-    ]);
-    expect(buildOutputPlan(accounts, ["sub2api"]).map((file) => file.path)).toEqual([
-      "sub2api_2-accounts.json",
-    ]);
-  });
-
-  it("serializes single-format multi-account output as one JSONL file", () => {
-    const accounts = normalizeInput(
-      [
-        { access_token: "a", email: "first@example.com", account_id: "acctfirst123456" },
-        { access_token: "b", email: "second@example.com", account_id: "acctsecond123456" },
-      ],
-      { sourceName: "accounts.json", sourcePath: "accounts.json" },
-    ).accounts;
-
-    const files = serializeOutputFiles(buildOutputPlan(accounts, ["cpa"]), "jsonl");
-
-    expect(files.map((file) => file.path)).toEqual(["cpa_2-accounts.jsonl"]);
-    const lines = files[0].text.trimEnd().split("\n");
-    expect(lines).toHaveLength(2);
-    expect(lines.map((line) => JSON.parse(line) as { email: string })).toEqual([
-      expect.objectContaining({ email: "first@example.com" }),
-      expect.objectContaining({ email: "second@example.com" }),
-    ]);
-  });
-
-  it("serializes multi-format output as one JSONL file per format folder", () => {
-    const accounts = normalizeInput(
-      [
-        { access_token: "a", email: "first@example.com", account_id: "acctfirst123456" },
-        { access_token: "b", email: "second@example.com", account_id: "acctsecond123456" },
-      ],
-      { sourceName: "accounts.json", sourcePath: "accounts.json" },
-    ).accounts;
-
-    const files = serializeOutputFiles(buildOutputPlan(accounts, ["cpa", "sub2api"], {
-      outputModes: effectiveOutputModes({ sub2api: "merged" }, "jsonl"),
-    }), "jsonl");
-
-    expect(files.map((file) => file.path)).toEqual([
-      "cpa/cpa_2-accounts.jsonl",
-      "sub2api/sub2api_2-accounts.jsonl",
-    ]);
-    expect(files[0].text.trimEnd().split("\n")).toHaveLength(2);
-    const sub2apiLines = files[1].text.trimEnd().split("\n");
-    expect(sub2apiLines).toHaveLength(2);
-    expect(JSON.parse(sub2apiLines[0]) as { accounts: unknown[] }).toMatchObject({
-      accounts: [expect.any(Object)],
-    });
-    expect(JSON.parse(sub2apiLines[1]) as { accounts: unknown[] }).toMatchObject({
-      accounts: [expect.any(Object)],
-    });
-  });
-
-  it("plans single-account files for merged formats when requested", () => {
-    const accounts = normalizeInput(
-      [
-        { access_token: "a", email: "first@example.com", account_id: "acctfirst123456" },
-        { access_token: "b", email: "second@example.com", account_id: "acctsecond123456" },
-      ],
-      { sourceName: "accounts.json", sourcePath: "accounts.json" },
-    ).accounts;
-
-    const files = buildOutputPlan(accounts, ["sub2api", "codex2api"], {
-      outputModes: {
-        sub2api: "single",
-        codex2api: "single",
+        email: "imported@example.com",
+        chatgpt_account_id: "imported-account",
+        plan_type: "team",
       },
     });
 
-    expect(files.map((file) => file.path)).toEqual([
-      "sub2api/sub2api_first_example.com_acctfirst123.json",
-      "sub2api/sub2api_second_example.com_acctsecond12.json",
-      "codex2api/codex2api_first_example.com_acctfirst123.json",
-      "codex2api/codex2api_second_example.com_acctsecond12.json",
-    ]);
-    expect(files.every((file) => file.accountCount === 1)).toBe(true);
+    expect(onlyAccount(session)).toMatchObject({
+      email: "claim@example.com",
+      accountId: "claim-account",
+      planType: "plus",
+    });
+    expect(onlyAccount(imported)).toMatchObject({
+      email: "imported@example.com",
+      accountId: "claim-account",
+      chatgptAccountId: "imported-account",
+      planType: "team",
+    });
   });
 
-  it("parses duplicate format flags and expands all", () => {
+  it("creates synthetic OpenAI id_token but omits it and refresh_token at render boundaries", async () => {
+    const store = await ingestValue({
+      platform: "openai",
+      credentials: {
+        access_token: jwt({
+          iss: "https://auth.openai.com",
+          email: "synthetic@example.com",
+          "https://api.openai.com/auth": { chatgpt_account_id: "synthetic-account" },
+        }),
+        refresh_token: "refresh-secret",
+      },
+    });
+    const account = onlyAccount(store);
+    expect(account).toMatchObject({ provider: "openai", idTokenSynthetic: true });
+    expect(account.idToken?.split(".")[2]).toBe(Buffer.from("lanv_authconv").toString("base64url"));
+
+    for (const format of ["cpa", "sub2api", "codex2api", "codexmanager", "codex"] as const) {
+      const text = await renderText(store, format, {
+        allowSyntheticIdToken: false,
+        includeRefreshToken: false,
+        now: new Date(0),
+      });
+      expect(text).not.toContain("refresh-secret");
+      expect(text).not.toContain(account.idToken!);
+    }
+    expect(onlyAccount(store).refreshToken).toBe("refresh-secret");
+  });
+
+  it("keeps every account when a shared account id has distinct credentials", async () => {
+    const store = await ingestValue(await fixture("sub2api-shared-account-id.json"));
+
+    expect(store.size).toBe(11);
+    expect(new Set([...store.values()].map((account) => account.accessToken)).size).toBe(11);
+  });
+
+  it("keeps session-token-only input explicit in Sub2API", async () => {
+    const store = await ingestValue({ platform: "openai", credentials: { session_token: "session-only" } });
+    const output = await renderJson(store, "sub2api") as { accounts: Array<{ credentials: Record<string, string> }> };
+
+    expect(output.accounts[0].credentials).toEqual({ session_token: "session-only" });
+  });
+
+  it("forced input mismatch returns a structured diagnostic and commits nothing", async () => {
+    const result = await ingestResult({ platform: "openai", credentials: { access_token: "token" } }, "grok");
+
+    expect(result.store.size).toBe(0);
+    expect(result.diagnostics).toMatchObject([{
+      code: "input_format_mismatch",
+      sourceName: "input.json",
+      sourcePath: "/input.json",
+      detail: "grok",
+    }]);
+  });
+
+  it("preserves CPA timestamps and a marked synthetic token on CPA round-trip", async () => {
+    const input = {
+      type: "codex",
+      email: "roundtrip@example.com",
+      account_id: "roundtrip-account",
+      access_token: "opaque-access",
+      id_token: "header.payload.original",
+      id_token_synthetic: true,
+      expired: "2026-07-14T11:02:59Z",
+      last_refresh: "2026-07-14T10:02:59Z",
+      disabled: false,
+    };
+    const store = await ingestValue(input, "cpa");
+    const output = await renderJson(store, "cpa") as Record<string, unknown>;
+
+    expect(output).toMatchObject({
+      expired: "2026-07-14T11:02:59Z",
+      last_refresh: "2026-07-14T10:02:59Z",
+      id_token_synthetic: true,
+    });
+    expect(String(output.id_token).split(".")[2]).toBe(Buffer.from("lanv_authconv").toString("base64url"));
+  });
+
+  it("parses repeated format flags once and expands all deterministically", () => {
     expect(parseFormatList(["cpa,sub2api", "cpa", "all"])).toEqual([
       "cpa",
       "sub2api",
@@ -1017,401 +392,65 @@ describe("authconv core", () => {
       "codexmanager",
       "codex",
       "grok",
+      "grok2api",
     ]);
-  });
-
-  it("detects supported input formats for default output decisions", () => {
-    const cases = [
-      [
-        {
-          accessToken: "some-access-token",
-          user: { id: "123" },
-          sessionToken: "some-session-token",
-        },
-        "session",
-      ],
-      [
-        {
-          accounts: [
-            {
-              name: "a",
-              credentials: { access_token: "token" },
-            },
-          ],
-        },
-        "sub2api",
-      ],
-      [
-        {
-          type: "codex",
-          access_token: "token",
-        },
-        "cpa",
-      ],
-      [
-        {
-          tokens: { access_token: "token" },
-          meta: { label: "account" },
-        },
-        "codexmanager",
-      ],
-      [
-        {
-          auth_mode: "chatgpt",
-          OPENAI_API_KEY: null,
-          tokens: { access_token: "token", account_id: "account" },
-          last_refresh: "2026-07-04T00:00:00.000Z",
-        },
-        "codex",
-      ],
-      [
-        [
-          {
-            access_token: "access",
-            session_token: "session",
-            id_token: "id",
-          },
-        ],
-        "codex2api",
-      ],
-      [
-        {
-          access_token: "access",
-          session_token: "session",
-          id_token: "id",
-        },
-        "codex2api",
-      ],
-      [
-        {
-          type: "not-codex",
-          access_token: "token",
-        },
-        "unknown",
-      ],
-      [{ access_token: "token" }, "unknown"],
-    ] as const;
-
-    for (const [input, expected] of cases) {
-      expect(detectInputFormat(input)).toBe(expected);
-    }
-  });
-
-  it("does not auto-detect aggregate-like objects as codex2api singles", () => {
-    expect(detectInputFormat({
-      refresh_token: "token",
-      session_token: "session",
-      accounts: [],
-    })).toBe("unknown");
-  });
-
-  it("uses a selected input format as the parsing strategy", () => {
-    const source = { sourceName: "input.json", sourcePath: "input.json" };
-    const sub2apiInput = {
-      type: "sub2api-data",
-      accounts: [
-        {
-          name: "Sub Account",
-          credentials: {
-            access_token: "sub-access-token",
-            email: "sub@example.com",
-          },
-        },
-      ],
-    };
-
-    expect(normalizeInput(sub2apiInput, source, { inputFormat: "sub2api" }).accounts).toHaveLength(1);
-
-    const forcedCpa = normalizeInput(sub2apiInput, source, { inputFormat: "cpa" });
-    expect(forcedCpa.accounts).toHaveLength(0);
-    expect(forcedCpa.warnings.length).toBeGreaterThan(0);
-  });
-
-  it("preserves session_token-only input in sub2api credentials", () => {
-    const account = normalizeInput(
-      { session_token: "session-only" },
-      { sourceName: "session.json", sourcePath: "session.json" },
-    ).accounts[0];
-
-    expect(renderFormat([account], "sub2api").accounts[0]).toMatchObject({
-      name: "authconv-account",
-      credentials: {
-        session_token: "session-only",
-      },
-      extra: {
-        import_source: "authconv",
-      },
-    });
-  });
-
-  it("keeps session_token-only output explicit across target formats", () => {
-    const account = normalizeInput(
-      { session_token: "session-only" },
-      { sourceName: "session.json", sourcePath: "session.json" },
-    ).accounts[0];
-
-    expect(renderFormat([account], "cpa")).toMatchObject({
-      type: "codex",
-      session_token: "session-only",
-    });
-    expect(renderFormat([account], "codex2api")).toEqual([
-      {
-        session_token: "session-only",
-      },
-    ]);
-    expect(renderFormat([account], "sub2api").accounts[0].credentials).toEqual({
-      session_token: "session-only",
-    });
-    expect(renderFormat([account], "codexmanager")).toMatchObject({
-      tokens: {},
-      meta: {
-        issuer: "https://auth.openai.com",
-        tags: ["authconv"],
-      },
-    });
-    expect(renderFormat([account], "codex")).toMatchObject({
-      auth_mode: "chatgpt",
-      OPENAI_API_KEY: null,
-      tokens: {
-        id_token: "",
-        access_token: "",
-        refresh_token: "",
-        account_id: "",
-      },
-    });
-  });
-
-  it("preserves CPA timestamp strings and synthetic marker when rendering CPA back to CPA", () => {
-    const input = {
-      type: "codex",
-      email: "cpa@example.com",
-      account_id: "acct_cpa",
-      plan_type: "team",
-      id_token: "synthetic-id-token",
-      access_token: "access-token",
-      refresh_token: "",
-      expired: "2026-07-14T11:02:59Z",
-      last_refresh: "2026-07-04T11:03:02Z",
-      disabled: false,
-      id_token_synthetic: true,
-    };
-    const account = normalizeInput(input, { sourceName: "cpa.json", sourcePath: "cpa.json" }).accounts[0];
-
-    expect(renderFormat([account], "cpa")).toEqual(input);
-  });
-
-  it("adds a warning when the expires_at date cannot be parsed", () => {
-    const input = {
-      access_token: "access",
-      expires_at: "not-a-valid-date",
-    };
-    const result = normalizeInput(input, { sourceName: "test.json", sourcePath: "test.json" });
-    expect(result.accounts[0].warnings.length).toBeGreaterThan(0);
-  });
-
-  it("dedupes accounts when credential fields are compatible", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const idToken = fakeJwt({ email: "a@example.com" });
-    const accounts = [
-      normalizeInput(
-        {
-          type: "codex",
-          access_token: "token-a",
-          email: "a@example.com",
-        },
-        { sourceName: "file1.json", sourcePath: "file1.json" },
-      ).accounts[0],
-      normalizeInput(
-        {
-          type: "codex",
-          access_token: "token-a",
-          refresh_token: "refresh-a",
-          session_token: "session-a",
-          id_token: idToken,
-          email: "a@example.com",
-          name: "Account A",
-        },
-        { sourceName: "file2.json", sourcePath: "file2.json" },
-      ).accounts[0],
-      normalizeInput({ access_token: "token-b", email: "b@example.com" }, { sourceName: "file3.json", sourcePath: "file3.json" }).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(2);
-    expect(deduped[0].email).toBe("a@example.com");
-    expect(deduped[0].refreshToken).toBe("refresh-a");
-    expect(deduped[0].sessionToken).toBe("session-a");
-    expect(deduped[0].idToken).toBe(idToken);
-    expect(deduped[0].name).toBe("Account A");
-    expect(deduped[0].sourceName).toBe("file1.json");
-    expect(deduped[1].email).toBe("b@example.com");
-  });
-
-  it("does not dedupe accounts when shared credential fields conflict", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ access_token: "same-access", session_token: "session-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
-      normalizeInput({ access_token: "same-access", session_token: "session-b", email: "b@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(2);
-  });
-
-  it("keeps distinct OpenAI users that share a chatgpt_account_id", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const input = await readFixtureJson("sub2api-shared-account-id.json");
-
-    const normalized = normalizeInput(input, {
-      sourceName: "shared-workspace.json",
-      sourcePath: "shared-workspace.json",
-    }).accounts;
-
-    const deduped = dedupeAccounts(normalized);
-    const [file] = buildOutputPlan(deduped, ["sub2api"]);
-    const output = file.content as {
-      accounts: Array<{ credentials: { email?: string } }>;
-    };
-
-    expect(normalized).toHaveLength(11);
-    expect(deduped).toHaveLength(11);
-    expect(file.accountCount).toBe(11);
-    expect(output.accounts).toHaveLength(11);
-    expect(output.accounts.map((account) => account.credentials.email)).toEqual(
-      Array.from({ length: 11 }, (_, index) => `user-${index + 1}@example.com`),
-    );
-  });
-
-  it("never dedupes credentials across OpenAI and xAI providers", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const openai = normalizeInput(
-      { access_token: "shared-token", email: "same@example.com" },
-      { sourceName: "openai.json", sourcePath: "openai.json" },
-    ).accounts[0];
-    const xai = normalizeInput(
-      { type: "xai", access_token: "shared-token", email: "same@example.com" },
-      { sourceName: "xai.json", sourcePath: "xai.json" },
-    ).accounts[0];
-
-    expect(dedupeAccounts([openai, xai])).toHaveLength(2);
-  });
-
-  it("does not dedupe accounts without any shared credential field", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
-      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(2);
-  });
-
-  it("keeps all accounts when a later credential bridges conflicting groups", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
-      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
-      normalizeInput({ refresh_token: "refresh-token", session_token: "session-token" }, { sourceName: "bridge.json", sourcePath: "bridge.json" }).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(3);
-    expect(deduped.map((account) => account.sourceName)).toEqual([
-      "refresh.json",
-      "session.json",
-      "bridge.json",
-    ]);
-  });
-
-  it("reports the existing row affected by a duplicate import", async () => {
-    const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ type: "codex", access_token: "token-a", email: "a@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
-      normalizeInput({ access_token: "token-b", email: "b@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
-      normalizeInput({ type: "codex", access_token: "token-a", refresh_token: "refresh-a" }, { sourceName: "duplicate.json", sourcePath: "duplicate.json" }).accounts[0],
-    ];
-
-    const result = dedupeAccountsWithAffectedIndex(accounts, 2);
-
-    expect(result.accounts).toHaveLength(2);
-    expect(result.affectedIndex).toBe(0);
-    expect(result.accounts[0].refreshToken).toBe("refresh-a");
-  });
-
-  it("reports the new row affected by a bridge import that cannot be merged safely", async () => {
-    const { dedupeAccountsWithAffectedIndex } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ refresh_token: "refresh-token", email: "refresh-only@example.com" }, { sourceName: "refresh.json", sourcePath: "refresh.json" }).accounts[0],
-      normalizeInput({ session_token: "session-token", email: "session-only@example.com" }, { sourceName: "session.json", sourcePath: "session.json" }).accounts[0],
-      normalizeInput({ refresh_token: "refresh-token", session_token: "session-token" }, { sourceName: "bridge.json", sourcePath: "bridge.json" }).accounts[0],
-    ];
-
-    const result = dedupeAccountsWithAffectedIndex(accounts, 2);
-
-    expect(result.accounts).toHaveLength(3);
-    expect(result.affectedIndex).toBe(2);
-    expect(result.accounts[2].sourceName).toBe("bridge.json");
-  });
-
-  it("does not dedupe an xAI identity after its credentials rotate", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const older = normalizeInput({
-      type: "xai",
-      access_token: "old-access",
-      refresh_token: "old-refresh",
-      sub: "same-user",
-      last_refresh: "2026-07-01T00:00:00.000Z",
-    }, { sourceName: "older.json", sourcePath: "older.json" }).accounts[0];
-    const newer = normalizeInput({
-      type: "xai",
-      access_token: "new-access",
-      refresh_token: "new-refresh",
-      sub: "same-user",
-      last_refresh: "2026-07-02T00:00:00.000Z",
-    }, { sourceName: "newer.json", sourcePath: "newer.json" }).accounts[0];
-
-    expect(dedupeAccounts([older, newer])).toHaveLength(2);
-  });
-
-  it("replaces a compatible synthetic id_token with a real id_token", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const synthetic = normalizeInput({
-      type: "codex",
-      access_token: "same-access",
-      email: "same@example.com",
-    }, { sourceName: "synthetic.json", sourcePath: "synthetic.json" }).accounts[0];
-    const real = normalizeInput({
-      type: "codex",
-      access_token: "same-access",
-      id_token: fakeJwt({ email: "same@example.com" }),
-      email: "same@example.com",
-    }, { sourceName: "real.json", sourcePath: "real.json" }).accounts[0];
-
-    const [deduped] = dedupeAccounts([synthetic, real]);
-    expect(deduped.idToken).toBe(real.idToken);
-    expect(deduped.idTokenSynthetic).toBe(false);
-  });
-
-  it("treats accounts with different tokens as distinct even if email matches", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput({ access_token: "token-a", email: "same@example.com" }, { sourceName: "a.json", sourcePath: "a.json" }).accounts[0],
-      normalizeInput({ access_token: "token-b", email: "same@example.com" }, { sourceName: "b.json", sourcePath: "b.json" }).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(2);
-  });
-
-  it("does not dedupe records without stable credentials", async () => {
-    const { dedupeAccounts } = await import("../src/index.js");
-    const accounts = [
-      normalizeInput(
-        { id_token: fakeJwt({ email: "same@example.com" }), id_token_synthetic: true },
-        { sourceName: "a.json", sourcePath: "a.json" },
-      ).accounts[0],
-      normalizeInput(
-        { id_token: fakeJwt({ email: "same@example.com" }), id_token_synthetic: true },
-        { sourceName: "b.json", sourcePath: "b.json" },
-      ).accounts[0],
-    ];
-    const deduped = dedupeAccounts(accounts);
-    expect(deduped).toHaveLength(2);
   });
 });
+
+async function fixture(path: string): Promise<unknown> {
+  return JSON.parse(await readFile(new URL(`./fixtures/${path}`, import.meta.url), "utf8"));
+}
+
+async function ingestValue(value: unknown, inputFormat?: InputFormat): Promise<AccountStore> {
+  return (await ingestResult(value, inputFormat)).store;
+}
+
+async function ingestResult(value: unknown, inputFormat?: InputFormat) {
+  const source: InputSource = {
+    name: "input.json",
+    path: "/input.json",
+    chunks: oneChunk(new TextEncoder().encode(JSON.stringify(value))),
+  };
+  return ingestSources([source], new AccountStore(), { parseTokens: parseNodeJsonTokens, inputFormat });
+}
+
+async function ingestText(text: string) {
+  const source: InputSource = {
+    name: "input.json",
+    path: "/input.json",
+    chunks: oneChunk(new TextEncoder().encode(text)),
+  };
+  return ingestSources([source], new AccountStore(), { parseTokens: parseNodeJsonTokens });
+}
+
+async function renderJson(
+  store: AccountStore,
+  format: OutputFormat,
+  options: RenderOptions = {},
+): Promise<unknown> {
+  return JSON.parse(await renderText(store, format, options));
+}
+
+async function renderText(
+  store: AccountStore,
+  format: OutputFormat,
+  options: RenderOptions = {},
+): Promise<string> {
+  const manifest = buildExportManifest(store, { formats: [format], verifyTokens: false });
+  expect(manifest.entries).toHaveLength(1);
+  return collectExportEntry(store, manifest.entries[0], options);
+}
+
+function onlyAccount(store: AccountStore): NormalizedAccount {
+  expect(store.size).toBe(1);
+  return [...store.values()][0];
+}
+
+async function* oneChunk(value: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield value;
+}
+
+function jwt(payload: Record<string, unknown>, signature = "signature"): string {
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode(payload)}.${signature}`;
+}

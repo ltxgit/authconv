@@ -4,7 +4,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22"
   },
   "bin": {
     "authconv": "./dist/cli.mjs"
@@ -12,11 +12,16 @@
   "scripts": {
     "test": "vitest run",
     "build": "node scripts/build.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
     "check:dist": "node scripts/check-dist.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "npm test -- --maxWorkers=1 && npm run typecheck && npm run build && npm run check:dist"
   },
   "dependencies": {
-    "fflate": "0.8.2"
+    "@zip.js/zip.js": "2.8.31",
+    "fflate": "0.8.2",
+    "stream-chain": "4.2.5",
+    "stream-json": "3.5.0"
   },
   "devDependencies": {
     "@types/node": "26.1.0",

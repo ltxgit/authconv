@@ -10,5 +10,5 @@
     "resolveJsonModule": true,
     "types": ["node", "vitest"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "scripts/**/*.ts"]
 }

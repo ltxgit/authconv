@@ -1,51 +1,48 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { existsSync, realpathSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { mkdir, open, readFile, readdir, stat, type FileHandle } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildOutputPlan,
-  dedupeAccounts,
-  detectCliLocale,
-  detectInputFormat,
-  effectiveOutputModes,
-  filterAccountsForFormats,
-  FORMAT_LABELS,
-  normalizeInput,
-  parseInputPayload,
-  parseFormatList,
-  serializeOutputFiles,
-  messagesFor,
-  normalizeLocale,
-  zipOutputFiles,
-} from "./index.js";
-import {
-  extractZipJsonSources,
-  isCredentialImportPath,
-  isJsonCredentialPath,
-  isZipCredentialPath,
-  normalizeArchiveEntryPath,
-} from "./import-sources.js";
+import packageJson from "../package.json" with { type: "json" };
+import { AccountStore } from "./account-store.js";
+import { detectCliLocale, FORMAT_LABELS, messagesFor, normalizeLocale } from "./i18n.js";
+import { ingestSources, type IngestionProgress } from "./ingestion.js";
+import { parseNodeJsonTokens } from "./input-node.js";
 import { zipDownloadName } from "./download-names.js";
-import { isOutputFormat } from "./formats.js";
-import { VERSION } from "./version.js";
+import { isConfigurableOutputFormat, isOutputFormat, parseFormatList } from "./formats.js";
+import {
+  buildExportManifest,
+  streamExport,
+  type ExportManifest,
+  type ExportSink,
+  type ExportWriter,
+} from "./output.js";
 import type {
-  InputFormat,
+  IngestionDiagnostic,
+  InputSource,
   Locale,
-  NormalizeOptions,
-  NormalizeResult,
+  NormalizedAccount,
   OutputFormat,
   OutputMode,
   OutputModes,
   OutputTextMode,
-  SerializedOutputFile,
+  TokenVerificationReason,
+  TokenVerificationStatus,
 } from "./types.js";
+
+declare const __AUTHCONV_VERSION__: string | undefined;
+const VERSION = typeof __AUTHCONV_VERSION__ === "string" && __AUTHCONV_VERSION__.trim()
+  ? __AUTHCONV_VERSION__.trim()
+  : packageJson.version;
 
 export type CliIo = {
   stdin?: string;
-  stdout?: string;
-  stderr?: string;
   cwd?: string;
+  writeStdout?: (chunk: Uint8Array) => void | Promise<void>;
+  writeStderr?: (text: string) => void;
+  stderrIsTTY?: boolean;
+  handleSignals?: boolean;
   onServerStarted?: (server: WebUiServer) => void;
 };
 
@@ -74,6 +71,7 @@ type ParsedArgs = {
   zip: boolean;
   allowSyntheticIdToken: boolean;
   includeRefreshToken: boolean;
+  verifyTokens: boolean;
   locale: Locale;
   inspect: boolean;
   dryRun: boolean;
@@ -84,13 +82,6 @@ type ParsedArgs = {
   serveListenSpecified: boolean;
   help: boolean;
   version: boolean;
-};
-
-type LoadedInput = {
-  input: unknown;
-  sourceName: string;
-  sourcePath: string;
-  inputFormat: InputFormat;
 };
 
 class CliError extends Error {
@@ -105,6 +96,7 @@ class CliError extends Error {
 export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult> {
   const locale = detectCliLocale(scanLocaleArg(args));
   const messages = messagesFor(locale).cli;
+  let stopSignalHandling = () => undefined;
   try {
     const parsed = parseArgs(args, locale);
     if (parsed.help) {
@@ -132,63 +124,84 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
 
     const cwd = io.cwd ?? currentWorkingDirectory(parsed.locale);
     const inputPaths = parsed.inputPaths.map((inputPath) => path.resolve(cwd, inputPath));
-    const loadedInputs = await readInputs(
+    const abortController = new AbortController();
+    const onSigint = () => abortController.abort(new DOMException("Interrupted", "AbortError"));
+    if (io.handleSignals) {
+      process.once("SIGINT", onSigint);
+      stopSignalHandling = () => { process.off("SIGINT", onSigint); };
+    }
+    const sources = await discoverInputSources(
       inputPaths,
       parsed.stdin,
       parsed.locale,
       io,
+      abortController.signal,
     );
-    const normalized = normalizeLoadedInputs(loadedInputs, {
-      locale: parsed.locale,
+    const store = new AccountStore();
+    const ingestion = await ingestSources(sources, store, {
+      parseTokens: parseNodeJsonTokens,
+      signal: abortController.signal,
+      verifyTokens: parsed.verifyTokens,
+      onProgress: progressReporter(io, parsed.locale),
     });
+    finishProgress(io);
 
-    if (normalized.accounts.length === 0) {
-      return fail(1, [messages.errors.noAccounts, ...normalized.rejections, ...normalized.warnings]);
+    const diagnosticLines = ingestion.diagnostics.map((diagnostic) => diagnosticMessage(diagnostic, parsed.locale));
+    if (store.size === 0) {
+      return fail(1, [messages.errors.noAccounts, ...diagnosticLines]);
     }
-    const successExitCode = normalized.rejections.length > 0 ? 1 : 0;
-    const visibleWarnings = normalized.warnings;
-
     const formats = resolveFormats(parsed.formatValues, parsed.locale);
-    const exportAccounts = filterAccountsForFormats(normalized.accounts, formats);
-    const files = buildOutputPlan(normalized.accounts, formats, {
-      outputModes: effectiveOutputModes(parsed.outputModes, parsed.textMode),
-      allowSyntheticIdToken: parsed.allowSyntheticIdToken,
-      includeRefreshToken: parsed.includeRefreshToken,
+    const manifest = buildExportManifest(store, {
+      formats,
+      outputModes: parsed.outputModes,
+      textMode: parsed.textMode,
+      forceZip: parsed.zip,
+      verifyTokens: parsed.verifyTokens,
     });
-    const serializedFiles = serializeOutputFiles(files, parsed.textMode);
-    const outputFormats = formats.filter((format) => serializedFiles.some((file) => file.format === format));
+    const verificationLines = verificationRejectionLines(manifest, parsed.locale);
+    const resultLines = [...diagnosticLines, ...verificationLines];
+    const successExitCode = ingestion.diagnostics.length > 0 || manifest.rejectedAccountCount > 0 ? 1 : 0;
 
     if (parsed.inspect) {
-      return info(appendRejections(inspectSummary(normalized, parsed.locale), normalized.rejections), successExitCode);
+      return info(appendDiagnostics(inspectSummary(store, parsed.locale), resultLines), successExitCode);
     }
 
-    if (serializedFiles.length === 0) {
-      return fail(1, [messages.errors.noApplicableFormats]);
+    if (manifest.entries.length === 0) {
+      const noOutput = manifest.rejectedAccountCount > 0
+        ? (parsed.locale === "zh" ? "没有通过 token 验证的可输出账号" : "No accounts passed token verification")
+        : messages.errors.noApplicableFormats;
+      return fail(1, [noOutput, ...resultLines]);
     }
 
     const outputRoot = path.resolve(cwd, parsed.outDir);
+    const exportAccounts = accountsFromManifest(store, manifest);
     const zipName = parsed.zip ? zipDownloadName(exportAccounts) : undefined;
 
     if (parsed.dryRun) {
-      return info(appendRejections(dryRunSummary(
-        exportAccounts.length,
-        zipName ? [{ path: zipName, accountCount: exportAccounts.length }] : serializedFiles,
-        visibleWarnings,
+      return info(appendDiagnostics(dryRunSummary(
+        manifest.accountCount,
+        zipName ? [{ path: zipName, accountCount: manifest.accountCount }] : manifest.entries,
         outputRoot,
         parsed.locale,
-      ), normalized.rejections), successExitCode);
+      ), resultLines), successExitCode);
     }
 
     if (parsed.stdout) {
-      if (outputFormats.length !== 1 || serializedFiles.length !== 1) {
+      if (manifest.formats.length !== 1 || manifest.entries.length !== 1 || manifest.archive) {
         return fail(2, [messages.errors.stdoutSingleFile]);
       }
+      const chunks: Uint8Array[] = [];
+      await streamExport(store, manifest, stdoutSink(io, chunks), {
+        signal: abortController.signal,
+        allowSyntheticIdToken: parsed.allowSyntheticIdToken,
+        includeRefreshToken: parsed.includeRefreshToken,
+      });
       return {
         exitCode: successExitCode,
-        stdout: serializedFiles[0].text,
-        stderr: appendRejections(
-          humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, undefined, parsed.locale),
-          normalized.rejections,
+        stdout: io.writeStdout ? "" : new TextDecoder().decode(concatBytes(chunks)),
+        stderr: appendDiagnostics(
+          humanSummary(manifest.accountCount, manifest.entries.length, manifest.formats, undefined, parsed.locale),
+          resultLines,
         ),
       };
     }
@@ -199,41 +212,51 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
         await assertTargetAvailable(targetPath, parsed.locale);
       }
       await mkdir(outputRoot, { recursive: true, mode: 0o700 });
-      await writeFile(targetPath, zipOutputFiles(serializedFiles), { mode: 0o600 });
+      await streamExport(store, manifest, fileSink(outputRoot, targetPath, parsed.force), {
+        signal: abortController.signal,
+        allowSyntheticIdToken: parsed.allowSyntheticIdToken,
+        includeRefreshToken: parsed.includeRefreshToken,
+        onProgress: exportProgressReporter(io, parsed.locale),
+      });
+      finishProgress(io);
       return {
         exitCode: successExitCode,
         stdout: "",
-        stderr: appendRejections(
-          fileSummary(exportAccounts.length, outputFormats, targetPath, visibleWarnings, parsed.locale),
-          normalized.rejections,
+        stderr: appendDiagnostics(
+          fileSummary(manifest.accountCount, manifest.formats, targetPath, parsed.locale),
+          resultLines,
         ),
       };
     }
 
     if (!parsed.force) {
-      await assertTargetsAvailable(outputRoot, serializedFiles, parsed.locale);
+      await assertTargetsAvailable(outputRoot, manifest, parsed.locale);
     }
+    await streamExport(store, manifest, fileSink(outputRoot, undefined, parsed.force), {
+      signal: abortController.signal,
+      allowSyntheticIdToken: parsed.allowSyntheticIdToken,
+      includeRefreshToken: parsed.includeRefreshToken,
+      onProgress: exportProgressReporter(io, parsed.locale),
+    });
+    finishProgress(io);
 
-    for (const file of serializedFiles) {
-      const targetPath = path.join(outputRoot, file.path);
-      await mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
-      await writeFile(targetPath, file.text, { encoding: "utf8", mode: 0o600 });
-    }
-
-    const singleTargetPath = serializedFiles.length === 1
-      ? path.join(outputRoot, serializedFiles[0].path)
+    const singleTargetPath = manifest.entries.length === 1
+      ? path.join(outputRoot, manifest.entries[0].path)
       : undefined;
     return {
       exitCode: successExitCode,
       stdout: "",
-      stderr: appendRejections(
+      stderr: appendDiagnostics(
         singleTargetPath
-          ? fileSummary(exportAccounts.length, outputFormats, singleTargetPath, visibleWarnings, parsed.locale)
-          : humanSummary(exportAccounts.length, serializedFiles.length, outputFormats, visibleWarnings, outputRoot, parsed.locale),
-        normalized.rejections,
+          ? fileSummary(manifest.accountCount, manifest.formats, singleTargetPath, parsed.locale)
+          : humanSummary(manifest.accountCount, manifest.entries.length, manifest.formats, outputRoot, parsed.locale),
+        resultLines,
       ),
     };
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return fail(130, [locale === "zh" ? "操作已取消" : "Operation cancelled"]);
+    }
     if (error instanceof CliError) {
       return fail(error.exitCode, [error.message]);
     }
@@ -244,6 +267,9 @@ export async function runCli(args: string[], io: CliIo = {}): Promise<CliResult>
       ? (process.env.DEBUG ? (error.stack ?? error.message) : error.message)
       : String(error);
     return fail(2, [msg]);
+  } finally {
+    stopSignalHandling();
+    finishProgress(io);
   }
 }
 
@@ -272,6 +298,7 @@ function parseArgs(args: string[], locale: Locale): ParsedArgs {
     zip: false,
     allowSyntheticIdToken: true,
     includeRefreshToken: true,
+    verifyTokens: true,
     locale,
     inspect: false,
     dryRun: false,
@@ -318,6 +345,9 @@ function parseArgs(args: string[], locale: Locale): ParsedArgs {
         break;
       case "--no-refresh-token":
         parsed.includeRefreshToken = false;
+        break;
+      case "--no-verify-token":
+        parsed.verifyTokens = false;
         break;
       case "--stdin":
         setStdinInput(parsed);
@@ -394,6 +424,7 @@ function validateParsedArgs(parsed: ParsedArgs): void {
       parsed.textMode !== "json" ||
       !parsed.allowSyntheticIdToken ||
       !parsed.includeRefreshToken ||
+      !parsed.verifyTokens ||
       Object.keys(parsed.outputModes).length > 0;
     if (hasConversionOption) {
       throw new CliError(2, messages.errors.serveConflict);
@@ -429,7 +460,7 @@ function setOutputMode(parsed: ParsedArgs, value: string): void {
   if (!isOutputFormat(format)) {
     throw new CliError(2, messages.errors.unknownOutputFormat(format));
   }
-  if (!isMergeableFormat(format)) {
+  if (!isConfigurableOutputFormat(format)) {
     throw new CliError(2, messages.errors.unsupportedModeFormat(format));
   }
   if (!isOutputMode(mode)) {
@@ -563,11 +594,7 @@ export async function startWebUiServer(options: {
 
 function defaultWebUiIndexPath(): string {
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.join(scriptDir, "index.html"),
-    path.join(scriptDir, "..", "dist", "index.html"),
-  ];
-  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
+  return path.join(scriptDir, "index.html");
 }
 
 function serverPort(server: Server): number | undefined {
@@ -599,101 +626,133 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
-async function readInputs(inputPaths: string[], useStdin: boolean, locale: Locale, io: CliIo): Promise<LoadedInput[]> {
+async function discoverInputSources(
+  inputPaths: string[],
+  useStdin: boolean,
+  locale: Locale,
+  io: CliIo,
+  signal: AbortSignal,
+): Promise<InputSource[]> {
   if (useStdin) {
-    const text = io.stdin !== undefined ? io.stdin : await readStdin();
-    return [parseInputText(text, "stdin", "stdin", locale)];
+    return [{
+      name: "stdin",
+      path: "stdin",
+      chunks: io.stdin !== undefined ? textChunks(io.stdin) : processStdinChunks(signal),
+    }];
   }
 
-  const inputGroups = await Promise.all(inputPaths.map((inputPath) => readInputPath(inputPath, locale)));
-  return inputGroups.flat();
-}
-
-async function readInputPath(inputPath: string, locale: Locale): Promise<LoadedInput[]> {
-  const messages = messagesFor(locale).cli;
-  const inputStat = await stat(inputPath);
-  if (inputStat.isDirectory()) {
-    const entries = await readdir(inputPath, { withFileTypes: true });
-    const files = entries
-      .filter((entry) => entry.isFile() && isCredentialImportPath(entry.name))
-      .map((entry) => entry.name)
-      .sort((left, right) => left.localeCompare(right));
-
-    if (files.length === 0) {
-      throw new CliError(3, messages.errors.noInputFiles(inputPath));
+  const discovered: string[] = [];
+  for (const inputPath of inputPaths) {
+    throwIfAborted(signal);
+    const inputStat = await stat(inputPath);
+    throwIfAborted(signal);
+    if (inputStat.isDirectory()) {
+      const files = await discoverDirectoryFiles(inputPath, signal);
+      if (files.length === 0) {
+        throw new CliError(3, messagesFor(locale).cli.errors.noInputFiles(inputPath));
+      }
+      for (const file of files) discovered.push(file);
+      continue;
     }
-
-    return Promise.all(
-      files.map(async (fileName) => {
-        const sourcePath = path.join(inputPath, fileName);
-        return parseInputFile(sourcePath, fileName, locale);
-      }),
-    ).then((groups) => groups.flat());
+    if (!inputStat.isFile()) {
+      throw new CliError(3, messagesFor(locale).cli.errors.notFileOrDirectory(inputPath));
+    }
+    discovered.push(inputPath);
   }
 
-  if (!inputStat.isFile()) {
-    throw new CliError(3, messages.errors.notFileOrDirectory(inputPath));
-  }
-
-  if (!isCredentialImportPath(inputPath)) {
-    throw new CliError(3, messages.errors.unsupportedInputFile(inputPath));
-  }
-
-  return parseInputFile(inputPath, path.basename(inputPath), locale);
+  return discovered.map((sourcePath) => {
+    const content = fileChunkSource(sourcePath, signal);
+    return {
+      name: path.basename(sourcePath),
+      path: sourcePath,
+      ...content,
+    };
+  });
 }
 
-async function parseInputFile(sourcePath: string, sourceName: string, locale: Locale): Promise<LoadedInput[]> {
-  if (isZipCredentialPath(sourcePath)) {
-    const sources = extractZipJsonSources(sourceName, await readFile(sourcePath));
-    return sources.map((source) => {
-      const entryPath = normalizeArchiveEntryPath(source.path.slice(sourceName.length + 1));
-      return parseInputText(source.text, source.name, `${sourcePath}/${entryPath}`, locale);
-    });
+export async function discoverDirectoryFiles(directory: string, signal: AbortSignal): Promise<string[]> {
+  throwIfAborted(signal);
+  const files: string[] = [];
+  const entries = await readdir(directory, { withFileTypes: true });
+  throwIfAborted(signal);
+  entries.sort((left, right) => left.name.localeCompare(right.name));
+  for (const entry of entries) {
+    throwIfAborted(signal);
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      const nestedFiles = await discoverDirectoryFiles(entryPath, signal);
+      for (const file of nestedFiles) files.push(file);
+    } else if (entry.isFile()) {
+      files.push(entryPath);
+    }
   }
-  if (isJsonCredentialPath(sourcePath)) {
-    return [parseInputText(await readFile(sourcePath, "utf8"), sourceName, sourcePath, locale)];
-  }
-  return [];
+  return files;
 }
 
-function parseInputText(text: string, sourceName: string, sourcePath: string, locale: Locale): LoadedInput {
-  let input: unknown;
+function fileChunkSource(
+  sourcePath: string,
+  signal: AbortSignal,
+): {
+  chunks: AsyncIterable<Uint8Array>;
+  cancel: (reason?: unknown) => void;
+} {
+  let stream: ReturnType<typeof createReadStream> | undefined;
+  let cancelled = false;
+  let cancelReason: unknown;
+  return {
+    chunks: (async function* () {
+      const current = createReadStream(sourcePath);
+      stream = current;
+      const abort = () => current.destroy(abortError(signal));
+      signal.addEventListener("abort", abort, { once: true });
+      try {
+        if (cancelled) current.destroy(asError(cancelReason));
+        for await (const chunk of current) {
+          if (signal.aborted) throw abortError(signal);
+          if (cancelled) return;
+          yield typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
+        }
+      } finally {
+        signal.removeEventListener("abort", abort);
+        current.destroy();
+        if (stream === current) stream = undefined;
+      }
+    })(),
+    cancel(reason) {
+      cancelled = true;
+      cancelReason = reason;
+      stream?.destroy(asError(reason));
+    },
+  };
+}
+
+async function* textChunks(text: string): AsyncGenerator<Uint8Array> {
+  yield new TextEncoder().encode(text);
+}
+
+async function* processStdinChunks(signal: AbortSignal): AsyncGenerator<Uint8Array> {
+  const abort = () => process.stdin.destroy(abortError(signal));
+  signal.addEventListener("abort", abort, { once: true });
   try {
-    input = parseInputPayload(text, { locale });
-  } catch (error) {
-    throw new Error(
-      `${sourceName}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    for await (const chunk of process.stdin) {
+      if (signal.aborted) throw abortError(signal);
+      yield typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
   }
-  return {
-    input,
-    sourceName,
-    sourcePath,
-    inputFormat: detectInputFormat(input),
-  };
 }
 
-function normalizeLoadedInputs(inputs: LoadedInput[], options: NormalizeOptions): NormalizeResult {
-  const results = inputs.map((item) =>
-    normalizeInput(item.input, {
-      sourceName: item.sourceName,
-      sourcePath: item.sourcePath,
-    }, options),
-  );
-  const allAccounts = results.flatMap((result) => result.accounts);
-  const dedupedAccounts = dedupeAccounts(allAccounts);
-  return {
-    accounts: dedupedAccounts,
-    warnings: results.flatMap((result) => result.warnings),
-    rejections: results.flatMap((result) => result.rejections),
-    inputFormat: resolveInputFormat(inputs),
-  };
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
 }
 
-function resolveInputFormat(inputs: LoadedInput[]): InputFormat {
-  return inputs.length > 0 && inputs.every((input) => input.inputFormat === "sub2api")
-    ? "sub2api"
-    : "unknown";
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortError(signal);
+}
+
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason ?? "Cancelled"));
 }
 
 function resolveFormats(values: string[], locale: Locale): OutputFormat[] {
@@ -707,100 +766,139 @@ function resolveFormats(values: string[], locale: Locale): OutputFormat[] {
   });
 }
 
-function groupWarnings(warnings: string[], locale: Locale): string[] {
-  const messages = messagesFor(locale).cli.summary;
-  const grouped = new Map<string, string[]>();
-
-  for (const warning of warnings) {
-    const match = warning.match(/^(.+?):\s*(.+)$/);
-    if (!match) {
-      const list = grouped.get(warning) || [];
-      grouped.set(warning, list);
-      continue;
-    }
-    const [, source, msg] = match;
-    const list = grouped.get(msg) || [];
-    list.push(source);
-    grouped.set(msg, list);
-  }
-
-  return Array.from(grouped.entries()).map(([msg, sources]) => {
-    if (sources.length === 0) return msg;
-    if (sources.length === 1) return `${sources[0]}: ${msg}`;
-    return messages.groupedWarnings(msg, sources);
-  });
-}
-
 function humanSummary(
   accountCount: number,
   fileCount: number,
   formats: OutputFormat[],
-  warnings: string[],
   outputRoot: string | undefined,
   locale: Locale,
 ): string {
   const messages = messagesFor(locale).cli.summary;
   const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
-  const lines = [messages.human(accountCount, fileCount, formats.length, formatLabels, outputRoot)];
-  appendWarnings(lines, warnings, locale);
-  return `${lines.join("\n")}\n`;
+  return `${messages.human(accountCount, fileCount, formats.length, formatLabels, outputRoot)}\n`;
 }
 
 function fileSummary(
   accountCount: number,
   formats: OutputFormat[],
   targetPath: string,
-  warnings: string[],
   locale: Locale,
 ): string {
   const messages = messagesFor(locale).cli.summary;
   const formatLabels = formats.map((f) => FORMAT_LABELS[f]).join("/");
-  const lines = [messages.humanFile(accountCount, formats.length, formatLabels, targetPath)];
-  appendWarnings(lines, warnings, locale);
-  return `${lines.join("\n")}\n`;
+  return `${messages.humanFile(accountCount, formats.length, formatLabels, targetPath)}\n`;
 }
 
-function appendWarnings(lines: string[], warnings: string[], locale: Locale): void {
-  const messages = messagesFor(locale).cli.summary;
-  for (const warning of groupWarnings(warnings, locale)) {
-    lines.push(`${messages.warning}: ${warning}`);
-  }
-}
-
-function appendRejections(summary: string, rejections: string[]): string {
-  if (rejections.length === 0) {
+function appendDiagnostics(summary: string, diagnostics: string[]): string {
+  if (diagnostics.length === 0) {
     return summary;
   }
   const prefix = summary.endsWith("\n") ? summary : `${summary}\n`;
-  return `${prefix}${rejections.join("\n")}\n`;
+  return `${prefix}${diagnostics.join("\n")}\n`;
 }
 
-function inspectSummary(result: NormalizeResult, locale: Locale): string {
+function inspectSummary(store: AccountStore, locale: Locale): string {
   const messages = messagesFor(locale).cli.summary;
-  const header = messages.inspectColumns;
-  const rows = result.accounts.map((account, index) => [
-    String(index + 1),
-    account.email ?? account.name ?? account.chatgptAccountId ?? account.accountId ?? messages.unknownAccount,
-    account.accountId ?? account.chatgptAccountId ?? messages.missingValue,
-    account.planType ?? messages.missingValue,
-    displayDate(account.expiresAt),
-  ]);
-  const widths = header.map((cell, col) =>
-    Math.max(cell.length, ...rows.map((row) => row[col].length)),
-  );
+  const header = [...messages.inspectColumns, locale === "zh" ? "验真" : "Verification"];
+  const rows = [...store.values()].map((account, index) => {
+    const openAi = account.provider === "openai" ? account : undefined;
+    return [
+      String(index + 1),
+      account.email ?? account.name ?? openAi?.chatgptAccountId ?? openAi?.accountId ?? account.userId ?? messages.unknownAccount,
+      openAi?.accountId ?? openAi?.chatgptAccountId ?? messages.missingValue,
+      openAi?.planType ?? messages.missingValue,
+      displayDate(account.expiresAt),
+      verificationDisplay(
+        account.tokenVerification?.status,
+        account.tokenVerification?.reason,
+        account.tokenVerification?.notBeforeActive,
+        locale,
+      ),
+    ];
+  });
+  const widths = header.map((cell) => cell.length);
+  for (const row of rows) {
+    for (let col = 0; col < row.length; col += 1) {
+      widths[col] = Math.max(widths[col], row[col].length);
+    }
+  }
   const formatRow = (cells: string[]) =>
     cells.map((cell, col) => cell.padEnd(widths[col], " ")).join("  ").trimEnd();
-  const lines = [formatRow(header), ...rows.map(formatRow)];
-  for (const warning of groupWarnings(result.warnings, locale)) {
-    lines.push(`${messages.warning}: ${warning}`);
-  }
+  const counts = store.summary().verificationCounts;
+  const verificationLine = locale === "zh"
+    ? `验真统计：真实 ${counts.verified}，伪造 ${counts.forged}，不可验证 ${counts.unverifiable}，未检查 ${counts.unchecked}`
+    : `Verification: ${counts.verified} verified, ${counts.forged} forged, ${counts.unverifiable} unverifiable, ${counts.unchecked} unchecked`;
+  const lines = [formatRow(header), ...rows.map(formatRow), verificationLine];
   return `${lines.join("\n")}\n`;
+}
+
+function verificationRejectionLines(manifest: ExportManifest, locale: Locale): string[] {
+  if (manifest.rejectedAccountCount === 0) return [];
+  const details = Object.entries(manifest.rejectionReasons)
+    .filter((entry): entry is [TokenVerificationReason, number] => typeof entry[1] === "number")
+    .map(([reason, count]) => `${verificationReasonLabel(reason, locale)}: ${count}`)
+    .join(locale === "zh" ? "，" : ", ");
+  const prefix = locale === "zh"
+    ? `token 验证拒绝 ${manifest.rejectedAccountCount} 个账号`
+    : `Token verification rejected ${manifest.rejectedAccountCount} account${manifest.rejectedAccountCount === 1 ? "" : "s"}`;
+  return [`${prefix}${details ? `: ${details}` : ""}`];
+}
+
+function verificationDisplay(
+  status: TokenVerificationStatus | undefined,
+  reason: TokenVerificationReason | undefined,
+  notBeforeActive: true | undefined,
+  locale: Locale,
+): string {
+  if (!status || !reason) return locale === "zh" ? "缺失" : "missing";
+  const statusLabels: Record<TokenVerificationStatus, [string, string]> = {
+    verified: ["真实", "verified"],
+    forged: ["伪造", "forged"],
+    unverifiable: ["不可验证", "unverifiable"],
+    unchecked: ["未检查", "unchecked"],
+  };
+  const notBefore = notBeforeActive
+    ? (locale === "zh" ? "，尚未生效" : ", not active yet")
+    : "";
+  return `${statusLabels[status][locale === "zh" ? 0 : 1]} (${verificationReasonLabel(reason, locale)}${notBefore})`;
+}
+
+function verificationReasonLabel(reason: TokenVerificationReason, locale: Locale): string {
+  const labels: Record<TokenVerificationReason, [string, string]> = {
+    signature_valid: ["签名有效", "valid signature"],
+    malformed_jwt: ["JWT 格式损坏", "malformed JWT"],
+    algorithm_rejected: ["算法不允许", "rejected algorithm"],
+    signature_failed: ["签名失败", "signature failed"],
+    issuer_mismatch: ["issuer 不匹配", "issuer mismatch"],
+    audience_mismatch: ["audience 不匹配", "audience mismatch"],
+    token_type_mismatch: ["token 类型不匹配", "token type mismatch"],
+    missing_access_token: ["缺少 access token", "missing access token"],
+    opaque_access_token: ["opaque access token", "opaque access token"],
+    unknown_kid: ["未知 kid", "unknown kid"],
+    unknown_provider: ["未知平台", "unknown provider"],
+    user_disabled: ["用户关闭验证", "verification disabled"],
+    verification_missing: ["缺少验真结果", "missing verification result"],
+  };
+  return labels[reason][locale === "zh" ? 0 : 1];
+}
+
+function accountsFromManifest(store: AccountStore, manifest: ExportManifest): NormalizedAccount[] {
+  const accounts: NormalizedAccount[] = [];
+  const seen = new Set<string>();
+  for (const entry of manifest.entries) {
+    for (const id of entry.accountIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const account = store.get(id);
+      if (account) accounts.push(account);
+    }
+  }
+  return accounts;
 }
 
 function dryRunSummary(
   accountCount: number,
-  files: Array<Pick<SerializedOutputFile, "path" | "accountCount">>,
-  warnings: string[],
+  files: Array<{ path: string; accountCount: number }>,
   outputRoot: string,
   locale: Locale,
 ): string {
@@ -810,15 +908,12 @@ function dryRunSummary(
     const [file] = files;
     lines.push(messages.fileLine(file.path, file.accountCount));
   }
-  for (const warning of groupWarnings(warnings, locale)) {
-    lines.push(`${messages.warning}: ${warning}`);
-  }
   return `${lines.join("\n")}\n`;
 }
 
-async function assertTargetsAvailable(outputRoot: string, files: SerializedOutputFile[], locale: Locale): Promise<void> {
-  for (const file of files) {
-    await assertTargetAvailable(path.join(outputRoot, file.path), locale);
+async function assertTargetsAvailable(outputRoot: string, manifest: ExportManifest, locale: Locale): Promise<void> {
+  for (const entry of manifest.entries) {
+    await assertTargetAvailable(path.join(outputRoot, entry.path), locale);
   }
 }
 
@@ -841,6 +936,117 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+function fileSink(outputRoot: string, archivePath: string | undefined, force: boolean): ExportSink {
+  return {
+    openFile: async (relativePath) => openFileWriter(path.join(outputRoot, relativePath), force),
+    openArchive: async () => {
+      if (!archivePath) throw new Error("Archive target is not configured");
+      return openFileWriter(archivePath, force);
+    },
+  };
+}
+
+async function openFileWriter(targetPath: string, force: boolean): Promise<ExportWriter> {
+  await mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+  const handle = await open(targetPath, force ? "w" : "wx", 0o600);
+  return createFileWriter(handle);
+}
+
+export function createFileWriter(handle: Pick<FileHandle, "write" | "close">): ExportWriter {
+  let position = 0;
+  let closed = false;
+  const close = async () => {
+    if (closed) return;
+    await handle.close();
+    closed = true;
+  };
+  return {
+    write: async (chunk) => {
+      let offset = 0;
+      while (offset < chunk.length) {
+        const result = await handle.write(chunk, offset, chunk.length - offset, position);
+        offset += result.bytesWritten;
+        position += result.bytesWritten;
+      }
+    },
+    close,
+    abort: close,
+  };
+}
+
+function stdoutSink(io: CliIo, collected: Uint8Array[]): ExportSink {
+  const writer: ExportWriter = {
+    write: async (chunk) => {
+      if (io.writeStdout) await io.writeStdout(chunk);
+      else collected.push(chunk.slice());
+    },
+    close: () => undefined,
+    abort: () => undefined,
+  };
+  return {
+    openFile: async () => writer,
+    openArchive: async () => writer,
+  };
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const bytes = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+function progressReporter(io: CliIo, locale: Locale) {
+  let last = 0;
+  let lastPhase: IngestionProgress["phase"] | undefined;
+  return (progress: IngestionProgress) => {
+    if (!io.stderrIsTTY || !io.writeStderr) return;
+    const now = Date.now();
+    if (now - last < 100 && progress.phase === lastPhase) return;
+    last = now;
+    lastPhase = progress.phase;
+    if (progress.phase === "verify") {
+      const label = locale === "zh" ? "验真" : "Verify";
+      io.writeStderr(`\r${label}: ${progress.verifiedCandidates}/${progress.processedCandidates}`);
+      return;
+    }
+    const label = locale === "zh" ? "导入" : "Import";
+    io.writeStderr(`\r${label}: ${progress.processedCandidates} / ${progress.storedAccounts}`);
+  };
+}
+
+function exportProgressReporter(io: CliIo, locale: Locale) {
+  let last = 0;
+  return (progress: { completedEntries: number; totalEntries: number; completedAccounts: number }) => {
+    if (!io.stderrIsTTY || !io.writeStderr) return;
+    const now = Date.now();
+    if (now - last < 100 && progress.completedEntries < progress.totalEntries) return;
+    last = now;
+    const label = locale === "zh" ? "导出" : "Export";
+    io.writeStderr(`\r${label}: ${progress.completedEntries}/${progress.totalEntries} (${progress.completedAccounts})`);
+  };
+}
+
+function finishProgress(io: CliIo): void {
+  if (io.stderrIsTTY && io.writeStderr) io.writeStderr("\r\u001b[2K");
+}
+
+function diagnosticMessage(diagnostic: IngestionDiagnostic, locale: Locale): string {
+  const position = diagnostic.line ? `${locale === "zh" ? "第" : "line "}${diagnostic.line}${locale === "zh" ? " 行" : ""}` : "";
+  const label: Record<IngestionDiagnostic["code"], [string, string]> = {
+    json_parse_failed: ["JSON 解析失败", "JSON parse failed"],
+    zip_read_failed: ["ZIP 解压失败", "ZIP extraction failed"],
+    input_format_mismatch: ["输入格式不匹配", "Input format mismatch"],
+    no_credential_tokens: ["没有可用凭证字段", "No credential tokens"],
+    unsupported_input: ["不支持的输入", "Unsupported input"],
+  };
+  const text = label[diagnostic.code][locale === "zh" ? 0 : 1];
+  return [diagnostic.sourceName, position, text, diagnostic.detail].filter(Boolean).join(": ");
+}
+
 function displayDate(value: string | undefined): string {
   return value?.slice(0, 10) || "—";
 }
@@ -849,12 +1055,8 @@ function isOutputMode(value: string): value is OutputMode {
   return value === "merged" || value === "single";
 }
 
-function isMergeableFormat(format: OutputFormat): boolean {
-  return format === "sub2api" || format === "codex2api" || format === "grok";
-}
-
 function isNodeIoError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error;
+  return error instanceof Error && "code" in error && typeof (error as NodeJS.ErrnoException).code === "string";
 }
 
 function nodeIoMessage(error: NodeJS.ErrnoException, locale: Locale): string {
@@ -881,18 +1083,6 @@ function info(stderr: string, exitCode = 0): CliResult {
   };
 }
 
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let text = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk: string) => {
-      text += chunk;
-    });
-    process.stdin.on("end", () => resolve(text));
-    process.stdin.on("error", reject);
-  });
-}
-
 function helpText(locale: Locale): string {
   return messagesFor(locale).cli.help(VERSION);
 }
@@ -913,7 +1103,12 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  const result = await runCli(process.argv.slice(2));
+  const result = await runCli(process.argv.slice(2), {
+    writeStdout: (chunk) => writeStreamChunk(process.stdout, chunk),
+    writeStderr: (text) => process.stderr.write(text),
+    stderrIsTTY: process.stderr.isTTY,
+    handleSignals: true,
+  });
   if (result.stdout) {
     process.stdout.write(result.stdout);
   }
@@ -921,4 +1116,20 @@ if (isMain()) {
     process.stderr.write(result.stderr);
   }
   process.exitCode = result.exitCode;
+}
+
+export function writeStreamChunk(stream: NodeJS.WriteStream, chunk: Uint8Array): Promise<void> | void {
+  if (stream.write(chunk)) return;
+  return new Promise((resolve, reject) => {
+    const onDrain = () => {
+      stream.off("error", onError);
+      resolve();
+    };
+    const onError = (error: Error) => {
+      stream.off("drain", onDrain);
+      reject(error);
+    };
+    stream.once("drain", onDrain);
+    stream.once("error", onError);
+  });
 }

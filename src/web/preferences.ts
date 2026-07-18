@@ -1,4 +1,5 @@
-import { ALL_FORMATS, type InputFormat, type Locale, type OutputFormat, type OutputMode, type OutputModes, type OutputTextMode } from "../types.js";
+import type { InputFormat, Locale, OutputFormat, OutputMode, OutputModes, OutputTextMode } from "../types.js";
+import { ALL_FORMATS, isConfigurableOutputFormat, isOutputFormat } from "../formats.js";
 import { normalizeLocale } from "../i18n.js";
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -10,6 +11,7 @@ export type WebPreferences = {
   previewFormat: OutputFormat;
   allowSyntheticIdToken: boolean;
   includeRefreshToken: boolean;
+  verifyTokens: boolean;
   locale: Locale;
   themeMode: ThemeMode;
   forcedInputFormat: InputFormat | "auto";
@@ -19,8 +21,6 @@ export type PreferenceStorage = Pick<Storage, "getItem" | "setItem">;
 
 export const PREFERENCES_STORAGE_KEY = "authconv.preferences.v1";
 
-const OUTPUT_FORMATS = new Set<OutputFormat>(ALL_FORMATS);
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 const INPUT_FORMATS = new Set<InputFormat | "auto">([
   "auto",
   "session",
@@ -83,6 +83,7 @@ export function sanitizePreferences(value: unknown): Partial<WebPreferences> {
   const includeRefreshToken = typeof value.includeRefreshToken === "boolean"
     ? value.includeRefreshToken
     : undefined;
+  const verifyTokens = typeof value.verifyTokens === "boolean" ? value.verifyTokens : undefined;
   const locale = typeof value.locale === "string" ? normalizeLocale(value.locale) : undefined;
   const themeMode = parseThemeMode(value.themeMode);
   const forcedInputFormat = parseInputFormat(value.forcedInputFormat);
@@ -94,6 +95,7 @@ export function sanitizePreferences(value: unknown): Partial<WebPreferences> {
     ...(previewFormat ? { previewFormat } : {}),
     ...(allowSyntheticIdToken !== undefined ? { allowSyntheticIdToken } : {}),
     ...(includeRefreshToken !== undefined ? { includeRefreshToken } : {}),
+    ...(verifyTokens !== undefined ? { verifyTokens } : {}),
     ...(locale ? { locale } : {}),
     ...(themeMode ? { themeMode } : {}),
     ...(forcedInputFormat ? { forcedInputFormat } : {}),
@@ -118,9 +120,7 @@ function parseFormats(value: unknown): OutputFormat[] | undefined {
 }
 
 function parseOutputFormat(value: unknown): OutputFormat | undefined {
-  return typeof value === "string" && OUTPUT_FORMATS.has(value as OutputFormat)
-    ? value as OutputFormat
-    : undefined;
+  return typeof value === "string" && isOutputFormat(value) ? value : undefined;
 }
 
 function parseOutputTextMode(value: unknown): OutputTextMode | undefined {
@@ -133,7 +133,7 @@ function parseOutputModes(value: unknown): OutputModes {
   }
   const outputModes: OutputModes = {};
   for (const format of ALL_FORMATS) {
-    if (MODE_FORMATS.has(format) && isOutputMode(value[format])) {
+    if (isConfigurableOutputFormat(format) && isOutputMode(value[format])) {
       outputModes[format] = value[format];
     }
   }

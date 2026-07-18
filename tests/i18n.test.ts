@@ -26,8 +26,8 @@ describe("authconv i18n", () => {
     expect(detectWebLocale("?lang=zh")).toBe("zh");
   });
 
-  it("reports import processed, added, and merged counts", () => {
-    expect(messagesFor("zh").web.fileImported(3, 2, 1)).toBe("已读取 3 个账号，新增 2 个，合并重复 1 个");
-    expect(messagesFor("en").web.fileImported(3, 2, 1)).toBe("Read 3 account(s), added 2, merged 1 duplicate(s)");
+  it("reports per-operation import and forged-skip counts", () => {
+    expect(messagesFor("zh").web.fileImported(4, 2, 1, 1)).toBe("读取 4 · 新增 2 · 合并 1 · 跳过伪造 1");
+    expect(messagesFor("en").web.fileImported(4, 2, 1, 1)).toBe("Read 4 · Added 2 · Merged 1 · Skipped forged 1");
   });
 });

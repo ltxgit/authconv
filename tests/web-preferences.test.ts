@@ -16,6 +16,7 @@ describe("web preferences", () => {
       previewFormat: "sub2api",
       allowSyntheticIdToken: false,
       includeRefreshToken: false,
+      verifyTokens: false,
       locale: "zh-CN",
       themeMode: "dark",
       forcedInputFormat: "session",
@@ -32,6 +33,7 @@ describe("web preferences", () => {
       previewFormat: "sub2api",
       allowSyntheticIdToken: false,
       includeRefreshToken: false,
+      verifyTokens: false,
       locale: "zh",
       themeMode: "dark",
       forcedInputFormat: "session",
@@ -47,6 +49,7 @@ describe("web preferences", () => {
       previewFormat: "codex2api",
       allowSyntheticIdToken: true,
       includeRefreshToken: true,
+      verifyTokens: true,
       locale: "en",
       themeMode: "system",
       forcedInputFormat: "auto",
@@ -60,6 +63,7 @@ describe("web preferences", () => {
       previewFormat: "codex2api",
       allowSyntheticIdToken: true,
       includeRefreshToken: true,
+      verifyTokens: true,
       locale: "en",
       themeMode: "system",
       forcedInputFormat: "auto",
@@ -77,18 +81,18 @@ describe("web preferences", () => {
     expect(readStoredPreferences(storage)).toEqual({ selectedFormats: [] });
   });
 
-  it("keeps Grok output and input preferences", () => {
+  it("keeps fixed Grok formats without persisting mode state", () => {
     const storage = memoryStorage();
     writeStoredPreferences({
-      selectedFormats: ["grok", "cpa"],
-      outputModes: { grok: "single" },
-      previewFormat: "grok",
+      selectedFormats: ["grok2api", "grok", "cpa"],
+      outputModes: { sub2api: "single", grok: "merged", grok2api: "single" },
+      previewFormat: "grok2api",
       forcedInputFormat: "grok",
     }, storage);
     expect(readStoredPreferences(storage)).toMatchObject({
-      selectedFormats: ["cpa", "grok"],
-      outputModes: { grok: "single" },
-      previewFormat: "grok",
+      selectedFormats: ["cpa", "grok", "grok2api"],
+      outputModes: { sub2api: "single" },
+      previewFormat: "grok2api",
       forcedInputFormat: "grok",
     });
   });

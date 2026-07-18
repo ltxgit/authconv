@@ -8,7 +8,8 @@ OpenAI / Grok OAuth 凭证格式转换工具。
 
 
 - ✅ **OpenAI / Grok** — 自动识别平台，支持混合账号批量转换。
-- ✅ **多格式导出** — 支持 CPA、sub2api、codex2api、Codex-Manager、Codex CLI auth.json 和 Grok CLI auth.json。
+- ✅ **多格式导出** — 支持 CPA、sub2api、codex2api、Codex-Manager、Codex CLI auth.json、Grok CLI auth.json 和 Grok2API auth map。
+- ✅ **默认离线验真** — 使用仓库内固定 OpenAI / xAI 公钥验证 access token，运行时不联网；可显式关闭为纯字段搬运。
 - ✅ **纯本地转换，零上传** — CLI 不发起网络请求；Web 版转换、解析、导出完全本地运行。
 - ✅ **Web 版无需安装** — 直接访问 [https://ltxgit.github.io/authconv/](https://ltxgit.github.io/authconv/) 或者点击项目内 `dist/index.html` 本地打开。
 
@@ -25,10 +26,11 @@ OpenAI / Grok OAuth 凭证格式转换工具。
 功能：
 
 - 纯浏览器端运行，零上传
-- 拖拽 JSON / JSONL / ZIP 文件或文件夹，或粘贴 JSON / JSONL 文本；支持的浏览器也可直接选择文件夹
-- 支持多格式导出，sub2api / codex2api 可选聚合或单账号模式
-- JSONL 单行输出
+- 拖拽任意扩展名的凭据文件或文件夹，按内容识别 JSON / JSONL / ZIP；也可粘贴 JSON / JSONL 文本
+- 支持多格式导出；sub2api / codex2api 可选聚合或单账号模式，Grok CLI 固定单账号，Grok2API 固定聚合
+- JSONL 每账号一行输出
 - 账号列表预览、输出 JSON 中 JWT 密文的悬停解码预览、复制、JSON / ZIP 下载
+- 默认离线验证 access token；文件导入会跳过明确伪造的账号，粘贴草稿保留“伪造”标记并阻止其输出，不可验证账号保留状态标记；关闭“验证 token 真伪”后允许按字段直接导出
 - 输入格式可自动识别，也可手动指定
 - 页面支持中文 / English 切换，选择会写入 URL 方便刷新保留
 - 支持跟随系统的明暗主题
@@ -39,7 +41,7 @@ OpenAI / Grok OAuth 凭证格式转换工具。
 
 ### 安装
 
-需要 Node.js 20.19.0 或更新版本。
+需要 Node.js 22 或更新版本。
 
 ```bash
 git clone https://github.com/ltxgit/authconv.git
@@ -69,7 +71,7 @@ node dist/cli.mjs creds.json -f all -o out/
 npm unlink -g authconv
 ```
 
-输入路径支持 JSON / JSONL / ZIP 文件和目录，可一次传多个。Shell 展开的 `*.json` 这类通配符会作为多路径输入传给 `authconv`，所以可以直接批量转换。stdin 只支持 JSON / JSONL / 连续拼接的多个完整 JSON 文档；ZIP 只作为文件输入。
+输入路径支持凭据文件和目录，可一次传多个；目录会递归读取全部普通文件，JSON / JSONL / ZIP 均按内容识别，不依赖扩展名。Shell 展开的 `*.json` 这类通配符会作为多路径输入传给 `authconv`，所以也可以直接批量转换。stdin 只支持 JSON / JSONL / 连续拼接的多个完整 JSON 文档；ZIP 只作为文件输入。
 完全无参数时显示帮助；从 stdin 读取时必须显式传 `--stdin`。
 
 ### 使用
@@ -82,6 +84,7 @@ npm unlink -g authconv
 - `codexmanager` — Codex-Manager
 - `codex` — Codex CLI auth.json
 - `grok` — Grok CLI auth.json
+- `grok2api` — Grok2API 多账号池
 
 常用命令：
 
@@ -101,7 +104,7 @@ authconv creds.json -f all -o out/
 # 输出多个指定格式（逗号分隔）
 authconv creds.json -f cpa,sub2api -o out/
 
-# 批量转换目录里的 json/jsonl
+# 递归读取目录并按内容识别凭据文件
 authconv accounts/ -f all -o out/
 
 # 使用 shell 通配符批量输入
@@ -136,19 +139,18 @@ cat creds.json | authconv --stdin -f cpa --stdout
 
 # 多个文件/目录一起输入
 authconv a.json b.json accounts/ -f cpa
+
+# 显式跳过 access token 验真，按字段直接转换
+authconv creds.json -f cpa --no-verify-token
 ```
 
-### 控制聚合格式的输出方式
+### 控制可切换格式的输出方式
 
-可聚合格式（`sub2api`/`codex2api`）默认合并为一个文件：
+`sub2api` 与 `codex2api` 默认合并为一个文件，也可以切换为每账号一个文件：
 
 ```bash
 # 每账号单独一个文件
 authconv accounts/ -f sub2api --mode sub2api=single
-
-# Grok CLI 多账号合并（默认）或拆分
-authconv grok-accounts/ -f grok
-authconv grok-accounts/ -f grok --mode grok=single
 
 # 合并为一个文件（默认）
 authconv accounts/ -f sub2api
@@ -160,6 +162,8 @@ authconv single-accounts/ -f sub2api -o out/
 authconv merged.json -f sub2api --mode sub2api=single -o out/
 ```
 
+Grok 输出没有模式开关：`grok` 固定为每账号一份官方 Grok CLI `auth.json`，`grok2api` 固定把所有 xAI 账号写入一个账号池文件。
+
 ### JSONL 文本模式
 
 ```bash
@@ -167,7 +171,7 @@ authconv merged.json -f sub2api --mode sub2api=single -o out/
 authconv accounts/ -f cpa --jsonl
 ```
 
-JSONL 模式将每个输出 JSON 压缩为单行，并强制 `sub2api` / `codex2api` 按单账号输出。
+JSONL 是独立的文本模式：每个账号文档压缩为一行，并按格式聚合到 `.jsonl` 文件；它不改变 JSON 模式下各格式的 single / merged 合同。
 
 ### 其他选项
 
@@ -183,6 +187,8 @@ authconv creds.json --lang en --inspect
 ```
 
 完整 CLI 参考见 [docs/cli.md](docs/cli.md)。
+
+默认只输出通过离线验真的账号。批量输入中部分账号验真失败时，真实账号仍会写出，CLI 返回退出码 1；全部账号被拒绝时不创建输出。验真不判断 token 是否已撤销或账号当前是否可用，签名真实但已过期的凭证仍可转换。
 
 ---
 

@@ -1,20 +1,25 @@
 import type { NormalizedAccount } from "./types.js";
 
-export function zipDownloadName(accounts: NormalizedAccount[], now = new Date()): string {
+export function zipDownloadName(accounts: Iterable<NormalizedAccount>, now = new Date()): string {
   return `authconv_${zipNameBasis(accounts)}_${localTimestamp(now)}.zip`;
 }
 
-function zipNameBasis(accounts: NormalizedAccount[]): string {
-  if (accounts.length === 1) {
-    return singleAccountBasis(accounts[0]);
+function zipNameBasis(accounts: Iterable<NormalizedAccount>): string {
+  let count = 0;
+  let first: NormalizedAccount | undefined;
+  for (const account of accounts) {
+    count += 1;
+    if (count === 1) first = account;
   }
-  return `${accounts.length}-accounts`;
+  return count === 1 && first ? singleAccountBasis(first) : `${count}-accounts`;
 }
 
 function singleAccountBasis(account: NormalizedAccount): string {
-  const identity = safeFileSegment(account.email ?? account.name ?? account.chatgptAccountId ?? account.accountId ?? account.userId ?? "account");
-  const accountId = account.chatgptAccountId ?? account.accountId;
-  const idSegment = accountId ? safeFileSegment(accountId.slice(0, 12)) : "";
+  const openAiId = account.provider === "openai" ? account.chatgptAccountId ?? account.accountId : undefined;
+  const xaiId = account.provider === "xai" ? account.userId ?? account.principalId : undefined;
+  const stableId = openAiId ?? xaiId;
+  const identity = safeFileSegment(account.email ?? account.name ?? stableId ?? account.userId ?? "account");
+  const idSegment = stableId ? safeFileSegment(stableId.slice(0, 12)) : "";
   return idSegment ? `${identity}_${idSegment}` : identity;
 }
 

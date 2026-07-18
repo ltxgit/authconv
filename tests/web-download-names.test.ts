@@ -7,9 +7,8 @@ function account(input: Partial<NormalizedAccount>): NormalizedAccount {
     provider: "openai",
     sourceName: "test",
     sourcePath: "test.json",
-    warnings: [],
     ...input,
-  };
+  } as unknown as NormalizedAccount;
 }
 
 describe("web download names", () => {

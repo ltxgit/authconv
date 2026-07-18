@@ -9,6 +9,7 @@ const distDir = resolve(root, "dist");
 const templatePath = resolve(root, "src/web/template.html");
 const stylePath = resolve(root, "src/web/styles.css");
 const webEntry = resolve(root, "src/web/app.ts");
+const workerEntry = resolve(root, "src/web/worker.ts");
 const cliEntry = resolve(root, "src/cli.ts");
 const htmlOut = resolve(distDir, "index.html");
 const cliOut = resolve(distDir, "cli.mjs");
@@ -17,24 +18,42 @@ await mkdir(distDir, { recursive: true });
 
 const displayVersion = await buildDisplayVersion(root);
 
-const [template, css, webBundle] = await Promise.all([
+const [template, css, workerBundle] = await Promise.all([
   readFile(templatePath, "utf8"),
   readFile(stylePath, "utf8"),
   esbuild.build({
-    entryPoints: [webEntry],
+    entryPoints: [workerEntry],
     bundle: true,
     format: "iife",
     platform: "browser",
-    target: "es2020",
-    define: {
-      __AUTHCONV_VERSION__: JSON.stringify(displayVersion),
-    },
+    target: "es2022",
     sourcemap: false,
     minify: false,
     write: false,
     logLevel: "silent",
   }),
 ]);
+
+const workerSource = workerBundle.outputFiles[0]?.text;
+if (!workerSource) {
+  throw new Error("Worker 入口构建未产生输出");
+}
+
+const webBundle = await esbuild.build({
+  entryPoints: [webEntry],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  target: "es2022",
+  define: {
+    __AUTHCONV_VERSION__: JSON.stringify(displayVersion),
+    __AUTHCONV_WORKER_SOURCE_BASE64__: JSON.stringify(Buffer.from(workerSource).toString("base64")),
+  },
+  sourcemap: false,
+  minify: false,
+  write: false,
+  logLevel: "silent",
+});
 
 const js = webBundle.outputFiles[0]?.text;
 if (!js) {
@@ -52,7 +71,7 @@ await esbuild.build({
   bundle: true,
   format: "esm",
   platform: "node",
-  target: "node20",
+  target: "node22",
   outfile: cliOut,
   define: {
     __AUTHCONV_VERSION__: JSON.stringify(displayVersion),

@@ -1,6 +1,11 @@
-import { ALL_FORMATS, type Locale, type OutputFormat, type OutputMode, type OutputModes, type OutputTextMode } from "../types.js";
+import type { Locale, OutputFormat, OutputMode, OutputModes, OutputTextMode } from "../types.js";
+import {
+  ALL_FORMATS,
+  isConfigurableOutputFormat,
+  isOutputFormat,
+  resolveOutputMode,
+} from "../formats.js";
 import { normalizeLocale } from "../i18n.js";
-import { effectiveWebOutputModes } from "./output-modes.js";
 
 export type WebOutputOptions = {
   selectedFormats: OutputFormat[];
@@ -9,6 +14,7 @@ export type WebOutputOptions = {
   previewFormat: OutputFormat;
   allowSyntheticIdToken?: boolean;
   includeRefreshToken?: boolean;
+  verifyTokens?: boolean;
   locale?: Locale;
 };
 
@@ -19,12 +25,10 @@ const URL_KEYS = {
   preview: "preview",
   fakeid: "fakeid",
   refresh: "refresh",
+  verify: "verify",
   lang: "lang",
 } as const;
 const NO_FORMATS = "none";
-
-const OUTPUT_FORMATS = new Set<OutputFormat>(ALL_FORMATS);
-const MODE_FORMATS = new Set<OutputFormat>(["sub2api", "codex2api", "grok"]);
 
 export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptions> {
   const params = new URLSearchParams(search);
@@ -35,6 +39,7 @@ export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptio
   const fakeidVal = params.get(URL_KEYS.fakeid);
   const allowSyntheticIdToken = fakeidVal === null ? undefined : fakeidVal !== "false";
   const includeRefreshToken = parseBooleanParam(params.get(URL_KEYS.refresh));
+  const verifyTokens = parseBooleanParam(params.get(URL_KEYS.verify));
   const locale = normalizeLocale(params.get(URL_KEYS.lang));
   return {
     ...(selectedFormats ? { selectedFormats } : {}),
@@ -43,13 +48,18 @@ export function parseOutputOptionsSearch(search: string): Partial<WebOutputOptio
     ...(previewFormat ? { previewFormat } : {}),
     ...(allowSyntheticIdToken !== undefined ? { allowSyntheticIdToken } : {}),
     ...(includeRefreshToken !== undefined ? { includeRefreshToken } : {}),
+    ...(verifyTokens !== undefined ? { verifyTokens } : {}),
     ...(locale ? { locale } : {}),
   };
 }
 
 export function outputOptionsUrl(href: string, options: WebOutputOptions): string {
   const url = new URL(href);
-  const outputModes = effectiveWebOutputModes(options.outputModes, options.outputTextMode);
+  const outputModes = options.outputTextMode === "jsonl"
+    ? Object.fromEntries(
+      ALL_FORMATS.filter(isConfigurableOutputFormat).map((format) => [format, "single"] as const),
+    ) as OutputModes
+    : options.outputModes;
   url.searchParams.set(URL_KEYS.format, formatsParam(options.selectedFormats));
   url.searchParams.set(URL_KEYS.text, options.outputTextMode);
   url.searchParams.set(URL_KEYS.mode, outputModesParam(outputModes));
@@ -63,6 +73,11 @@ export function outputOptionsUrl(href: string, options: WebOutputOptions): strin
     url.searchParams.set(URL_KEYS.refresh, "false");
   } else {
     url.searchParams.delete(URL_KEYS.refresh);
+  }
+  if (options.verifyTokens === false) {
+    url.searchParams.set(URL_KEYS.verify, "false");
+  } else {
+    url.searchParams.delete(URL_KEYS.verify);
   }
   if (options.locale) {
     url.searchParams.set(URL_KEYS.lang, options.locale);
@@ -103,7 +118,7 @@ function formatsParam(formats: OutputFormat[]): string {
 }
 
 function parseFormat(value: string | null): OutputFormat | undefined {
-  return value && OUTPUT_FORMATS.has(value as OutputFormat) ? value as OutputFormat : undefined;
+  return value && isOutputFormat(value) ? value : undefined;
 }
 
 function parseTextMode(value: string | null): OutputTextMode | undefined {
@@ -124,12 +139,12 @@ function parseOutputModes(value: string | null): OutputModes {
 function outputModesParam(outputModes: OutputModes): string {
   return ALL_FORMATS
     .filter(isModeFormat)
-    .map((format) => `${format}:${outputModes[format] ?? "merged"}`)
+    .map((format) => `${format}:${resolveOutputMode(format, outputModes[format])}`)
     .join(",");
 }
 
-function isModeFormat(value: string): value is "sub2api" | "codex2api" | "grok" {
-  return MODE_FORMATS.has(value as OutputFormat);
+function isModeFormat(value: string): value is OutputFormat {
+  return isOutputFormat(value) && isConfigurableOutputFormat(value);
 }
 
 function isOutputMode(value: string | undefined): value is OutputMode {
